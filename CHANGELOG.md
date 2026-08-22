@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+### Fixed
+
+- Application shutdown now latches at the MelonLoader lifecycle boundary. Strategy ticks stay suspended after Unity begins its save-upload exit flow, even after the game UI has already been torn down.
+
 ## 1.0.1
 
 ### Fixed

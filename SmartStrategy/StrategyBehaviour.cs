@@ -103,13 +103,13 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     public void OnApplicationQuit()
     {
-        if (Current == this) SuspendForGameQuit();
+        if (Current == this) Plugin.SuspendForApplicationQuit();
     }
 
     public void Update()
     {
         if (Current != this) return;
-        if (GameContracts.IsGameQuitRequested())
+        if (Plugin.IsApplicationQuitting || GameContracts.IsGameQuitRequested())
         {
             SuspendForGameQuit();
             return;
@@ -178,7 +178,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         }
     }
 
-    private void SuspendForGameQuit()
+    internal void SuspendForGameQuit()
     {
         if (_quitSuspended) return;
         _quitSuspended = true;

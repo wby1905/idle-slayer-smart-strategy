@@ -12,10 +12,12 @@ public sealed class Plugin : MelonMod
     internal static readonly MelonLogger.Instance Log = Melon<Plugin>.Logger;
     internal static SmartConfig Config;
     internal static ModHelper ModHelperInstance;
+    internal static bool IsApplicationQuitting { get; private set; }
     internal static bool EndgameModeActive => Config?.EndgameModeEnabled.Value == true;
 
     public override void OnInitializeMelon()
     {
+        IsApplicationQuitting = false;
         ModHelper.ModHelperMounted += instance => ModHelperInstance = instance;
         Config = new SmartConfig();
         HarmonyInstance.PatchAll();
@@ -39,5 +41,21 @@ public sealed class Plugin : MelonMod
     public override void OnLateInitializeMelon()
     {
         AutoProgressionAscensionGuard.TryInstall(HarmonyInstance);
+    }
+
+    public override void OnApplicationQuit()
+    {
+        SuspendForApplicationQuit();
+    }
+
+    public override void OnDeinitializeMelon()
+    {
+        SuspendForApplicationQuit();
+    }
+
+    internal static void SuspendForApplicationQuit()
+    {
+        IsApplicationQuitting = true;
+        StrategyBehaviour.Current?.SuspendForGameQuit();
     }
 }
