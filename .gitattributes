@@ -7,6 +7,8 @@
 *.props text eol=lf
 *.md text eol=lf
 *.ps1 text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
 *.dll binary
 *.png binary
 *.zip binary
