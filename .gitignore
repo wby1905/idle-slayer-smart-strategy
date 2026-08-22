@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+artifacts/
+deploy-backups/
+TestResults/
+coverage/
+SmartStrategy.local.props
+*.user
+*.suo
+*.DotSettings.user
+*.nupkg
+*.zip

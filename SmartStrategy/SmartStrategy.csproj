@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\SmartStrategy.local.props" Condition="Exists('..\SmartStrategy.local.props')" />
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SmartStrategy</AssemblyName>
+    <Version>1.0.0</Version>
+    <IdleSlayerGameDir Condition="'$(IdleSlayerGameDir)' == '' and '$(IDLE_SLAYER_GAME_DIR)' != ''">$(IDLE_SLAYER_GAME_DIR)</IdleSlayerGameDir>
+    <IdleSlayerAssembliesDir>$(IdleSlayerGameDir)\MelonLoader\Il2CppAssemblies</IdleSlayerAssembliesDir>
+    <MelonLoaderDir>$(IdleSlayerGameDir)\MelonLoader\net6</MelonLoaderDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Reference>
+      <Private>false</Private>
+    </Reference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <Reference Include="MelonLoader"><HintPath>$(MelonLoaderDir)\MelonLoader.dll</HintPath></Reference>
+    <Reference Include="0Harmony"><HintPath>$(MelonLoaderDir)\0Harmony.dll</HintPath></Reference>
+    <Reference Include="IdleSlayerMods.Common"><HintPath>$(IdleSlayerGameDir)\Mods\IdleSlayerMods.Common.dll</HintPath></Reference>
+    <Reference Include="Assembly-CSharp"><HintPath>$(IdleSlayerAssembliesDir)\Assembly-CSharp.dll</HintPath></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(MelonLoaderDir)\Il2CppInterop.Runtime.dll</HintPath></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(IdleSlayerAssembliesDir)\Il2Cppmscorlib.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(IdleSlayerAssembliesDir)\UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(IdleSlayerAssembliesDir)\UnityEngine.InputLegacyModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.Physics2DModule"><HintPath>$(IdleSlayerAssembliesDir)\UnityEngine.Physics2DModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(IdleSlayerAssembliesDir)\UnityEngine.UI.dll</HintPath></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(IdleSlayerAssembliesDir)\Unity.TextMeshPro.dll</HintPath></Reference>
+  </ItemGroup>
+  <Target Name="ValidateIdleSlayerBuildEnvironment" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(IdleSlayerGameDir)' == ''"
+           Text="IdleSlayerGameDir is not configured. Set IDLE_SLAYER_GAME_DIR, pass -p:IdleSlayerGameDir=..., or create SmartStrategy.local.props." />
+    <Error Condition="'$(IdleSlayerGameDir)' != '' and !Exists('$(IdleSlayerGameDir)\Idle Slayer.exe')"
+           Text="IdleSlayerGameDir does not point to an Idle Slayer installation: $(IdleSlayerGameDir)" />
+    <Error Condition="'$(IdleSlayerGameDir)' != '' and !Exists('$(IdleSlayerGameDir)\Mods\IdleSlayerMods.Common.dll')"
+           Text="IdleSlayerMods.Common.dll was not found in $(IdleSlayerGameDir)\Mods." />
+  </Target>
+</Project>

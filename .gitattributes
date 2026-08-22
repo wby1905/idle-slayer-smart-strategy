@@ -1,0 +1,12 @@
+* text=auto
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.md text eol=lf
+*.ps1 text eol=lf
+*.dll binary
+*.png binary
+*.zip binary

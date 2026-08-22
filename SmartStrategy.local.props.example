@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Copy this file to SmartStrategy.local.props and set your own game directory. -->
+    <IdleSlayerGameDir>X:\Games\Steam\steamapps\common\Idle Slayer</IdleSlayerGameDir>
+  </PropertyGroup>
+</Project>
