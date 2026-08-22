@@ -65,13 +65,18 @@ Use these keys during play:
 - `F6`: material-travel toggle
 - `F7`: write a detailed status snapshot to the log
 
-## Quest rerolls and AutoProgression
+## AutoProgression compatibility
 
-Smart Strategy owns Daily and Weekly reroll eligibility while its corresponding reroll switch is enabled. AutoProgression is no longer required for unlimited rerolls.
+Smart Strategy does not require AutoProgression. You can run both mods, but only one mod should control each overlapping system.
 
-Smart Strategy also owns the optional Portal cooldown reset. If AutoProgression is installed, disable its entire `Quests -> Enabled` section to avoid running two quest and Portal controllers at once. Other AutoProgression sections remain independent.
+| Area | Behavior when both mods are installed |
+| --- | --- |
+| Quest claiming, generation, filtering and Daily or Weekly rerolls | Smart Strategy owns these actions. Set `[Quests] Enabled = false` in `UserData/AutoProgression.cfg`. |
+| Portal cooldown reset | Smart Strategy owns this only when its zero-cooldown Portal switch is enabled. Disabling AutoProgression's Quests section prevents both mods from resetting the same Portal state. |
+| Automatic Ascension | AutoProgression runs normally. During an active Smart Strategy Paid Souls burst, Smart Strategy blocks the start of a new Ascension until the Souls bonus ends. If AutoProgression already started an Ascension, its trailing Buy All phase can finish. |
+| All other AutoProgression sections | They remain independent. Smart Strategy does not enable, disable or rewrite them. |
 
-Smart Strategy reports this conflict but never changes another mod's configuration.
+Smart Strategy reads `AutoProgression.cfg` only to detect an enabled quest controller. It shows one compatibility warning and leaves the file unchanged. If the optional Ascension guard cannot find the expected AutoProgression API, Smart Strategy logs the compatibility failure and leaves AutoProgression behavior unchanged.
 
 ## Logging
 

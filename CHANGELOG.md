@@ -20,7 +20,7 @@ Initial public release.
 
 ### Safety and compatibility
 
-- Detects AutoProgression quest-controller conflicts without changing another mod's configuration.
+- Detects enabled AutoProgression quest mutation controls without writing its configuration, and blocks only new AutoProgression Ascensions during an active paid Souls burst.
 - Stops strategy mutations during the native save-upload exit flow and prevents duplicate controllers across scene transitions.
 - Records game, game-assembly, Common-library, runtime and configuration-schema versions at startup.
 - Centralizes version-sensitive Unity paths, external-mod contracts and craftable-effect values for compatibility reviews.
