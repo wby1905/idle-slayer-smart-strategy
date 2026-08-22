@@ -537,7 +537,8 @@ internal sealed partial class QuestDirector
 
     private static bool IsBackgroundOnlyOpportunity(QuestType type) => type is
         QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or
-        QuestType.HitRandomGoldenBoxes or QuestType.GetCoinsFromRandomBox;
+        QuestType.HitRandomGoldenBoxes or QuestType.GetCoinsFromRandomBox or
+        QuestType.DoCriticals;
 
     private static bool IsSpecificKillObjective(QuestPlan plan)
     {
@@ -1668,7 +1669,7 @@ internal sealed partial class QuestDirector
                 var remaining = Math.Max(1, quest.questGoal - quest.questCurrentGoal);
                 var credit = quest.questType == QuestType.GetMaterials
                     ? MapEfficiencyEstimator.MaterialProgressPerEligibleKill(estimate.TargetsGiant)
-                    : quest.questType == QuestType.DoCriticals ? 1 : AvailableKillCreditPerEnemy(quest);
+                    : AvailableKillCreditPerEnemy(quest);
                 if (credit <= 0) continue;
                 var contributionDensity = estimate.TargetsGiant
                     ? MapEfficiencyEstimator.EstimatedTargetKillsPerMinute(density, true,
@@ -1724,9 +1725,10 @@ internal sealed partial class QuestDirector
     private static MapEfficiency PortfolioEstimate(BaseMap map, Quest quest)
     {
         if (quest == null) return null;
-        if (quest.questType == QuestType.WindDashKills) return null;
+        // Critical hits progress against every enemy. They stay in the parallel execution group for Critical Sword
+        // coverage and progress tracking, but must not influence the chosen route or suppress a concrete enemy target.
+        if (quest.questType is QuestType.WindDashKills or QuestType.DoCriticals) return null;
         if (quest.questType == QuestType.GetMaterials) return MapEfficiencyEstimator.EvaluateForMaterialQuest(map);
-        if (quest.questType == QuestType.DoCriticals) return MapEfficiencyEstimator.EvaluateForAllEnemies(map);
         if (!NeedsEnemyMap(quest.questType)) return null;
         return MapEfficiencyEstimator.EvaluateForQuest(map, quest);
     }

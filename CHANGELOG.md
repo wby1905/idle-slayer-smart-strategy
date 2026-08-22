@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+
+- Critical-hit quests now remain background-only opportunities. They no longer influence joint map selection or suppress reachable specific-enemy routes such as Carniplants in Jungle.
+
 ## 1.0.0
 
 Initial public release.
