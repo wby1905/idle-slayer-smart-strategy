@@ -1,0 +1,69 @@
+name: Bug report
+description: Report reproducible Smart Strategy behavior or compatibility problems.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Back up your save and press F10 if automation is behaving unexpectedly. Do not upload saves, account identifiers, purchase records, proxy credentials, or full logs containing personal paths.
+  - type: input
+    id: smart-strategy-version
+    attributes:
+      label: Smart Strategy version
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: game-version
+    attributes:
+      label: Idle Slayer version
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: MelonLoader and Idle Slayer Mods Core versions
+      description: Copy these from the Smart Strategy startup compatibility snapshot.
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Enable ...
+        2. Enter ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: Include only settings related to the problem. Remove personal paths or identifiers.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log excerpt
+      description: Include the smallest useful excerpt from MelonLoader/Latest.log, preferably with an F7 snapshot. Remove personal paths or identifiers.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I backed up my save before reproducing the issue.
+          required: true
+        - label: I removed personal data and unrelated log content.
+          required: true
+        - label: I checked that another automation mod is not controlling the same subsystem.
+          required: true

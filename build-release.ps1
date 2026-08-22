@@ -56,10 +56,12 @@ $hash = (Get-FileHash -LiteralPath (Join-Path $mods 'SmartStrategy.dll') -Algori
 Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding utf8NoBOM `
     -Value "$hash  Mods/SmartStrategy.dll"
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+$zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
 
 [PSCustomObject]@{
     Version = $version
     Dll = (Join-Path $mods 'SmartStrategy.dll')
     Zip = $zip
-    Sha256 = $hash
+    DllSha256 = $hash
+    ZipSha256 = $zipHash
 }

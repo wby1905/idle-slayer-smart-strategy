@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a focused automation, settings, or compatibility improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Explain the gameplay situation or maintenance problem this would solve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the observable result, relevant settings, and safe default.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Important boundaries
+      description: Note material costs, save risks, version-sensitive game APIs, conflicts, or cases that must remain manual.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain workarounds or simpler approaches you considered.

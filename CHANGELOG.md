@@ -29,3 +29,6 @@ Initial public release.
 
 - Builds against a user-supplied Idle Slayer installation without storing game or third-party assemblies in the repository.
 - Ships a release archive containing the mod DLL, README, changelog, license, SHA-256 checksum and README banner.
+- Publishes consistent author, repository and MIT license metadata across the assembly, source archive, GitHub and Nexus Mods.
+- Includes structured GitHub bug-report, feature-request and pull-request templates plus automatic release-note categories.
+- Reports separate SHA-256 hashes for the release DLL and final ZIP archive.

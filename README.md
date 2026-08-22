@@ -8,6 +8,13 @@ Smart Strategy keeps your Slayer working on the best available objective. It eva
 
 Standard automation and endgame effects have separate switches. Endgame mode starts disabled.
 
+## Download and source
+
+- Download the release build from [Nexus Mods](https://www.nexusmods.com/idleslayer/mods/49).
+- Browse the source, report bugs and request features on [GitHub](https://github.com/wby1905/idle-slayer-smart-strategy).
+
+The Nexus archive is the supported installation package. GitHub source checkouts are intended for development and do not include game assemblies or third-party dependencies.
+
 ## Core features
 
 - **Quest planning:** claims and generates quest sets, learns Daily completion times, rerolls poor objectives and prioritizes quests that unlock useful content.
@@ -20,8 +27,8 @@ Standard automation and endgame effects have separate switches. Endgame mode sta
 ## Requirements
 
 - Idle Slayer on Windows
-- MelonLoader 0.7.x / .NET 6 runtime used by the game
-- `IdleSlayerMods.Common.dll`
+- [MelonLoader 0.7.2 or later](https://www.nexusmods.com/idleslayer/mods/6) / .NET 6 runtime used by the game
+- [Idle Slayer Mods Core 1.3.2 or later](https://www.nexusmods.com/idleslayer/mods/3), which provides `IdleSlayerMods.Common.dll`
 
 The current compatibility baseline is Idle Slayer 7.0.6, MelonLoader 0.7.2 and IdleSlayerMods.Common 1.3.2. Other versions may work, but they have not been verified against this release.
 
@@ -29,7 +36,7 @@ The mod is version-sensitive because it calls game IL2CPP types directly. After 
 
 ## Installation
 
-1. Install MelonLoader and IdleSlayerMods.Common.
+1. Install MelonLoader and Idle Slayer Mods Core from the links above.
 2. Copy `SmartStrategy.dll` into the game's `Mods` directory.
 3. Start the game and open **Smart Strategy** from the information-panel button list.
 
@@ -115,7 +122,7 @@ Create a distributable archive with:
 .\build-release.ps1
 ```
 
-The build fails early when the game directory or `IdleSlayerMods.Common.dll` is missing. The release DLL is written to `SmartStrategy/bin/Release/net6.0/SmartStrategy.dll`; build output and release artifacts are ignored by Git.
+The build fails early when the game directory or `IdleSlayerMods.Common.dll` is missing. The release DLL is written to `SmartStrategy/bin/Release/net6.0/SmartStrategy.dll`; build output and release artifacts are ignored by Git. The release command prints separate SHA-256 hashes for the DLL and final ZIP archive.
 
 ## Architecture and compatibility
 
@@ -132,4 +139,4 @@ After an Idle Slayer or dependency update, compare the startup compatibility sna
 
 Smart Strategy is an unofficial community mod and is not affiliated with the Idle Slayer developer. It does not automatically manage the enabled state of other mods.
 
-See `CONTRIBUTING.md` for repository conventions and `SECURITY.md` for responsible vulnerability reporting.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repository conventions, [SECURITY.md](SECURITY.md) for responsible vulnerability reporting and [GitHub Issues](https://github.com/wby1905/idle-slayer-smart-strategy/issues) for public bug reports and feature requests.

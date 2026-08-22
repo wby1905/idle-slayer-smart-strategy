@@ -6,6 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>SmartStrategy</AssemblyName>
     <Version>1.0.0</Version>
+    <Authors>David Wang</Authors>
+    <Description>Configurable Idle Slayer automation for quests, materials, travel, combat, Rage, and progression.</Description>
+    <RepositoryUrl>https://github.com/wby1905/idle-slayer-smart-strategy</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <IdleSlayerGameDir Condition="'$(IdleSlayerGameDir)' == '' and '$(IDLE_SLAYER_GAME_DIR)' != ''">$(IDLE_SLAYER_GAME_DIR)</IdleSlayerGameDir>
     <IdleSlayerAssembliesDir>$(IdleSlayerGameDir)\MelonLoader\Il2CppAssemblies</IdleSlayerAssembliesDir>
     <MelonLoaderDir>$(IdleSlayerGameDir)\MelonLoader\net6</MelonLoaderDir>

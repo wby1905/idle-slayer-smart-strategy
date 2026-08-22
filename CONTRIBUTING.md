@@ -6,6 +6,8 @@ Smart Strategy compiles against assemblies from a local Idle Slayer installation
 
 Do not commit game files, MelonLoader binaries, other mods, generated build output, logs, saves or local configuration files.
 
+Use the repository's issue forms for reproducible bugs and focused feature requests. Follow `SECURITY.md` and open a private security advisory for save, account, purchase or other security-sensitive problems.
+
 ## Code boundaries
 
 - Put external Unity names and hierarchy paths in `GameContracts.cs`.
