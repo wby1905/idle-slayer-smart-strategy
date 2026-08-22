@@ -67,7 +67,7 @@ Use these keys during play:
 
 ## AutoProgression compatibility
 
-Smart Strategy does not require AutoProgression. You can run both mods, but only one mod should control each overlapping system.
+Smart Strategy does not require [AutoProgression 2.0](https://www.nexusmods.com/idleslayer/mods/40). You can run both mods, but only one mod should control each overlapping system.
 
 | Area | Behavior when both mods are installed |
 | --- | --- |
