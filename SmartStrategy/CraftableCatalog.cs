@@ -18,7 +18,10 @@ internal enum SmartItem
     NecklaceOfCollectables,
     AlternateDimensionStaff,
     BidimensionalStaff,
-    DeathwaveScepter
+    DeathwaveScepter,
+    BunnyPaw,
+    DeathBringer,
+    CpsSpyglass
 }
 
 internal sealed class CraftableCatalog
@@ -38,12 +41,31 @@ internal sealed class CraftableCatalog
         [SmartItem.NecklaceOfCollectables] = new[] { "craftableitemnecklaceofcollectables", "necklaceofcollectables", "necklaceofcollectibles" },
         [SmartItem.AlternateDimensionStaff] = new[] { "craftableitemalternatedimensionstaff", "alternatedimensionstaff" },
         [SmartItem.BidimensionalStaff] = new[] { "craftableitembidimensionalstaff", "bidimensionalstaff" },
-        [SmartItem.DeathwaveScepter] = new[] { "craftableitemdeathwavescepter", "deathwavescepter" }
+        [SmartItem.DeathwaveScepter] = new[] { "craftableitemdeathwavescepter", "deathwavescepter" },
+        [SmartItem.BunnyPaw] = new[] { "craftableitembunnypaw", "bunnypaw" },
+        [SmartItem.DeathBringer] = new[] { "craftableitemdeathbringer", "deathbringer" },
+        [SmartItem.CpsSpyglass] = new[] { "craftableitemcpsspyglass", "cpsspyglass" }
     };
 
     private readonly Dictionary<SmartItem, TemporaryCraftableItem> _items = new();
     private readonly HashSet<SmartItem> _loggedMissing = new();
     private float _nextResolveTime;
+
+    internal static bool HasUnlockedRecipe(TemporaryCraftableItem item)
+    {
+        if (item == null || CraftableItems.list?.TemporaryHammer?.IsActive() != true) return false;
+        return item.HasRequiredItems() && item.HasRequiredAscensionUpgrades() &&
+               item.HasRequiredUpgrades() && item.HasRequiredCharacterSkins() && item.ExtraCondition();
+    }
+
+    internal static bool IsSupplementalTimedItem(TemporaryCraftableItem item)
+    {
+        if (item == null) return false;
+        var name = Normalize(item.name);
+        return Matches(name, string.Empty, Aliases[SmartItem.BunnyPaw]) ||
+               Matches(name, string.Empty, Aliases[SmartItem.DeathBringer]) ||
+               Matches(name, string.Empty, Aliases[SmartItem.CpsSpyglass]);
+    }
 
     internal TemporaryCraftableItem Get(SmartItem kind)
     {

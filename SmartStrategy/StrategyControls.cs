@@ -80,6 +80,10 @@ public sealed partial class StrategyBehaviour
         InvalidateMaterialPlan();
         _nextTick = 0f;
         _nextIdleSoulMapScan = 0f;
+        _nextSupplementalCraftCheckAt = 0f;
+        _nextSupplementalRefineAt = 0f;
+        _supplementalRefining.Invalidate();
+        _nextPermanentTimedCraftableScanAt = 0f;
         SmartLog.Info(SmartLogCategory.Settings,
             $"Applied {changedKeys.Count} settings and invalidated quest, material, travel, and combat plans.");
     }
@@ -98,6 +102,7 @@ public sealed partial class StrategyBehaviour
             $"Managed client effects: random multipliers={PermanentClientBonuses.ManagedRandomEventCount}, " +
             $"timed craftables={PermanentClientBonuses.ManagedTimedCraftableCount}.");
         SmartLog.Info(SmartLogCategory.Endgame, PaidSoulsBurstStatusSummary());
+        SmartLog.Info(SmartLogCategory.Material, "Refinery: " + _supplementalRefining.Status);
 
         var giantFactor = MapEfficiencyEstimator.CurrentGiantSpawnFactor(includeTemporaryShards: true);
         SmartLog.Info(SmartLogCategory.Planning,

@@ -12,13 +12,16 @@ body:
     id: smart-strategy-version
     attributes:
       label: Smart Strategy version
-      placeholder: 1.0.0
+      description: Enter the exact version number shown in the startup log, not "latest".
+      placeholder: 1.1.0
     validations:
       required: true
   - type: input
     id: game-version
     attributes:
       label: Idle Slayer version
+      description: Enter the exact game version number, not "latest".
+      placeholder: 7.3.6
     validations:
       required: true
   - type: input
@@ -49,12 +52,12 @@ body:
     id: configuration
     attributes:
       label: Relevant configuration
-      description: Include only settings related to the problem. Remove personal paths or identifiers.
+      description: Include only settings related to the problem. For refinery issues, include the refining, material-farming and paid-action switches. Remove personal paths or identifiers.
   - type: textarea
     id: logs
     attributes:
       label: Relevant log excerpt
-      description: Include the smallest useful excerpt from MelonLoader/Latest.log, preferably with an F7 snapshot. Remove personal paths or identifiers.
+      description: Include a short excerpt from MelonLoader/Latest.log. For an exception, include the first error and its stack trace; an F7 snapshot can add context. Remove personal paths or identifiers.
       render: text
   - type: checkboxes
     id: checks

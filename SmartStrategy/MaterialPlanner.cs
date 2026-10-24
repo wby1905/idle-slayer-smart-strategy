@@ -15,11 +15,12 @@ internal sealed class MaterialNeed
     internal string Purpose { get; }
     internal int QuestPlanId { get; }
     internal bool Opportunistic { get; }
+    internal bool ForRefinery { get; }
     internal double Severity => Desired <= 0 ? 0 : Math.Clamp((Desired - Current) / Desired, 0, 1);
 
     internal MaterialNeed(Drop material, BaseMap map, double desired, double current, int priority,
         double targetEnemiesPerPattern, double expectedEligibleKills, bool giantDrop, string purpose = "Stock supply",
-        int questPlanId = 0, bool opportunistic = false)
+        int questPlanId = 0, bool opportunistic = false, bool forRefinery = false)
     {
         Material = material;
         Map = map;
@@ -32,6 +33,7 @@ internal sealed class MaterialNeed
         Purpose = purpose;
         QuestPlanId = questPlanId;
         Opportunistic = opportunistic;
+        ForRefinery = forRefinery;
     }
 }
 
@@ -44,6 +46,21 @@ internal sealed class MaterialPlanner
     private readonly Dictionary<int, Dictionary<SmartItem, int>> _recommendedKillStaffUsesByQuest = new();
 
     internal MaterialPlanner(CraftableCatalog catalog) => _catalog = catalog;
+
+    internal double PlannedRawReserve(Drop raw, IEnumerable<int> activePlanIds)
+    {
+        // Concurrent quest recommendations can share staff coverage. Retain the largest planned
+        // count of each staff rather than multiplying it by the number of simultaneous quests.
+        var uses = new Dictionary<SmartItem, int>();
+        foreach (var plan in activePlanIds.Distinct().Where(id => _recommendedKillStaffUsesByQuest.ContainsKey(id))
+                     .Select(id => _recommendedKillStaffUsesByQuest[id]))
+            foreach (var pair in plan)
+                uses[pair.Key] = Math.Max(uses.TryGetValue(pair.Key, out var current) ? current : 0, pair.Value);
+        var total = 0d;
+        foreach (var pair in uses)
+            total += RefinedCraftingSupply.RecipeAmount(_catalog.Get(pair.Key), raw) * Math.Max(0, pair.Value);
+        return total;
+    }
 
     internal MaterialNeed FindDedicatedCraftSupplyNeed(SmartItem kind, int requestedUses, string purpose,
         out int targetUses, out bool ready, out string unavailableReason)
@@ -306,10 +323,10 @@ internal sealed class MaterialPlanner
     {
         if (plan?.Quest == null) return false;
         if (plan.StrategicUnlockBonus > 0 || plan.TargetMap != null && plan.JointQuestCount > 0) return true;
-        return plan.Type is QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or
-            QuestType.KillGiants or QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or
-            QuestType.KillEnemiesOfType or QuestType.KillShinyEnemies or QuestType.WindDashKills or
-            QuestType.GetMaterials or QuestType.GoThroughPortals;
+        return plan.Type is QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
+            QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
+            QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies or QuestKind.WindDashKills or
+            QuestKind.GetMaterials or QuestKind.GoThroughPortals or QuestKind.VisitLocation;
     }
 
     private static MaterialNeed FindOpportunisticTaskMapNeed(QuestPlan plan)
@@ -338,12 +355,13 @@ internal sealed class MaterialPlanner
 
     private MaterialNeed FindQuestSupplyNeed(QuestPlan plan)
     {
-        if (!Plugin.Config.QuestSupplyPlanningEnabled.Value || plan?.Quest == null || plan.Current >= plan.Goal)
+        if (!Plugin.Config.QuestSupplyPlanningEnabled.Value || plan?.Quest == null ||
+            !QuestApi.CanProgressNow(plan.Quest) || plan.Current >= plan.Goal)
             return null;
         // A low-progress Daily Rage kill is kept only when natural cooldown is nearly ready and one window suffices.
         // Supplying new pill or staff materials would violate that cost premise; persistent and Weekly quests still use
         // the full combined model.
-        if (plan.Source == QuestSource.Daily && plan.Type == QuestType.KillEnemiesWithRageMode)
+        if (plan.Source == QuestSource.Daily && plan.Type == QuestKind.KillEnemiesWithRageMode)
             return null;
 
         var combinedStaffNeed = FindCombinedKillStaffSupplyNeed(plan);
@@ -354,7 +372,8 @@ internal sealed class MaterialPlanner
         string firstRejection = null;
         foreach (var kind in RelevantQuestBoosters(plan))
         {
-            if (kind == SmartItem.RagePill && plan.Type == QuestType.KillEnemiesWithRageMode)
+            if (kind == SmartItem.RagePill && plan.Type == QuestKind.KillEnemiesWithRageMode &&
+                IsCombinedKillStaffQuest(plan))
                 continue; // Already evaluated by the staff, cooldown, and one on-demand pill combined model.
             if (kind == SmartItem.RagePill && !Plugin.Config.DedicatedRagePillMaterialFarming.Value)
                 continue;
@@ -459,10 +478,11 @@ internal sealed class MaterialPlanner
 
         var remaining = Math.Max(0, plan.Goal - plan.Current);
         if (remaining <= 0) return null;
-        var rageQuest = plan.Type == QuestType.KillEnemiesWithRageMode;
+        var rageQuest = plan.Type == QuestKind.KillEnemiesWithRageMode;
         var candidates = new List<KillStaffCandidate>();
         foreach (var definition in KillStaffDefinitions())
         {
+            if (plan.UsesUnboostedProgress) break;
             var item = _catalog.Get(definition.Kind);
             if (item == null) continue;
             try
@@ -510,6 +530,7 @@ internal sealed class MaterialPlanner
         var liveCredit = 1.0;
         try { liveCredit = Math.Max(1, PlayerInventory.instance?.questProgressPerKill ?? 1); }
         catch { /* Use one quest credit. */ }
+        if (plan.UsesUnboostedProgress) liveCredit = 1;
         var activeBonus = activeCandidates.Sum(x => Math.Max(0, x.Bonus));
         var baseCredit = Math.Max(1, liveCredit - activeBonus);
         var directKillBonuses = ExistingKillBonusesAfter(activeCandidates, travel).ToArray();
@@ -649,14 +670,14 @@ internal sealed class MaterialPlanner
 
     internal bool ShouldCraftRecommendedKillStaff(QuestPlan plan, SmartItem kind)
     {
-        if (plan?.Quest == null ||
+        if (plan?.Quest == null || plan.UsesUnboostedProgress || !QuestApi.CanProgressNow(plan.Quest) ||
             !_recommendedKillStaffUsesByQuest.TryGetValue(plan.InstanceId, out var recommendations)) return false;
         return recommendations.TryGetValue(kind, out var uses) && uses > 0;
     }
 
     internal bool HasRecommendedKillStaff(QuestPlan plan)
     {
-        if (plan?.Quest == null ||
+        if (plan?.Quest == null || plan.UsesUnboostedProgress || !QuestApi.CanProgressNow(plan.Quest) ||
             !_recommendedKillStaffUsesByQuest.TryGetValue(plan.InstanceId, out var recommendations)) return false;
         return recommendations.Values.Any(uses => uses > 0);
     }
@@ -870,10 +891,11 @@ internal sealed class MaterialPlanner
         return true;
     }
 
-    private static bool IsCombinedKillStaffQuest(QuestPlan plan) => plan != null && !plan.IsCollab &&
-        plan.Type is QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or
-            QuestType.KillGiants or QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or
-            QuestType.KillEnemiesOfType or QuestType.KillShinyEnemies;
+    private static bool IsCombinedKillStaffQuest(QuestPlan plan) => plan != null &&
+        (plan.Type == QuestKind.KillEnemiesWithRageMode || !plan.UsesUnboostedProgress &&
+        plan.Type is QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
+            QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
+            QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies);
 
     private static bool IsKillStaff(SmartItem kind) => CraftableEffectModel.IsKillStaff(kind);
 
@@ -1074,7 +1096,7 @@ internal sealed class MaterialPlanner
                 freeActivation = rage != null && (rage.currentState != RageModeManager.RageModeStates.NotActive ||
                     rage.currentCd <= 0.01) ? 1 : 0;
                 var rageDuration = Math.Max(1, rage?.GetDuration() ?? 20);
-                if (plan.Type == QuestType.UseRageMode)
+                if (plan.Type == QuestKind.UseRageMode)
                     return Math.Max(0, plan.Goal - plan.Current - freeActivation);
                 return Math.Max(0, CeilToInt(boostedWorkSeconds / rageDuration) - freeActivation);
             }
@@ -1376,34 +1398,34 @@ internal sealed class MaterialPlanner
 
     private static IEnumerable<SmartItem> RelevantQuestBoosters(QuestPlan plan)
     {
-        if (plan.Type is QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or
-            QuestType.KillGiants or QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or
-            QuestType.KillEnemiesOfType or QuestType.KillShinyEnemies)
+        if (plan.Type is QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
+            QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
+            QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies)
         {
             if (plan.TargetsGiants) yield return SmartItem.ShardsNecklace;
-            if (!plan.IsCollab)
+            if (!plan.UsesUnboostedProgress)
             {
                 yield return SmartItem.DeathwaveScepter;
                 yield return SmartItem.BidimensionalStaff;
                 yield return SmartItem.AlternateDimensionStaff;
             }
         }
-        if (!plan.IsCollab && plan.Type is QuestType.PickUpCoins or QuestType.PickUpRubies or QuestType.PickUpSapphires or
-            QuestType.PickUpEmeralds or QuestType.PickUpGemstones or QuestType.PickUpDiamonds or QuestType.PickUpZyniums)
+        if (!plan.UsesUnboostedProgress && plan.Type is QuestKind.PickUpCoins or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or
+            QuestKind.PickUpEmeralds or QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or QuestKind.PickUpZyniums)
             yield return SmartItem.NecklaceOfCollectables;
-        if (!plan.IsCollab && plan.Type is QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or
-            QuestType.HitRandomGoldenBoxes) yield return SmartItem.RandomBoxStaff;
-        if (plan.Type is QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox)
+        if (!plan.UsesUnboostedProgress && plan.Type is QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or
+            QuestKind.HitRandomGoldenBoxes) yield return SmartItem.RandomBoxStaff;
+        if (plan.Type is QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox)
             yield return SmartItem.RandomStone;
-        if (plan.Type == QuestType.GetMaterials) yield return SmartItem.Whetstone;
-        if (plan.Type is QuestType.BonusStage or QuestType.BonusStageSections)
+        if (plan.Type == QuestKind.GetMaterials) yield return SmartItem.Whetstone;
+        if (plan.Type is QuestKind.BonusStage or QuestKind.BonusStageSections)
         {
             yield return SmartItem.Specialization;
             yield return SmartItem.RandomStone;
         }
-        if (plan.Type == QuestType.ChestHuntChests) yield return SmartItem.KeyManifest;
-        if (plan.Type == QuestType.DoCriticals) yield return SmartItem.CriticalSword;
-        if (plan.Type is QuestType.KillEnemiesWithRageMode or QuestType.UseRageMode || plan.RequiresRageForBowAutomation)
+        if (plan.Type == QuestKind.ChestHuntChests) yield return SmartItem.KeyManifest;
+        if (plan.Type == QuestKind.DoCriticals) yield return SmartItem.CriticalSword;
+        if (plan.Type is QuestKind.KillEnemiesWithRageMode or QuestKind.UseRageMode || plan.RequiresRageForBowAutomation)
             yield return SmartItem.RagePill;
     }
 

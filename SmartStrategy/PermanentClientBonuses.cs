@@ -221,7 +221,11 @@ public sealed partial class StrategyBehaviour
                 if (!double.IsFinite(duration) || duration <= 0.05) continue;
 
                 bool unlocked;
-                try { unlocked = item.TabVisible(); }
+                try
+                {
+                    unlocked = item.TabVisible() ||
+                        CraftableCatalog.IsSupplementalTimedItem(item) && CraftableCatalog.HasUnlockedRecipe(item);
+                }
                 catch { unlocked = false; }
                 if (!unlocked) continue;
 

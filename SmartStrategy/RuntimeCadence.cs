@@ -12,6 +12,7 @@ internal static class RuntimeCadence
     internal const float SettingsPopupCloseGraceSeconds = 1f;
 
     internal const float QuestActiveTimeSampleSeconds = 0.5f;
+    internal const float QuestCompatibilityRetrySeconds = 30f;
     internal const float QuestMutationSettleSeconds = 1.5f;
     internal const float QuestGenerationSettleSeconds = 5f;
     internal const float QuestGenerationFailureRetrySeconds = 15f;
@@ -24,4 +25,5 @@ internal static class RuntimeCadence
     internal const float CraftActionBackoffSeconds = 1.5f;
     internal const float CraftFailureBackoffSeconds = 30f;
     internal const float CraftSkipLogSeconds = 30f;
+    internal const float SupplementalRefineCheckSeconds = 3f;
 }

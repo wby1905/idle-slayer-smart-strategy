@@ -42,7 +42,15 @@ internal enum SmartSettingId
     PermanentMultipliers,
     PermanentSouls,
     PermanentCraftables,
-    PermanentPaid500
+    PermanentPaid500,
+    BunnyPaw,
+    DeathBringer,
+    CpsSpyglass,
+    SupplementalRefining,
+    RefineryRawFarming,
+    RefineryIdleStock,
+    RefineryBuySlots,
+    RefinerySpeedup
 }
 
 internal static partial class SmartSettingsUi
@@ -105,11 +113,19 @@ internal static partial class SmartSettingsUi
             new(SmartSettingId.HordeRage, combat, SmartSettingsText.HordeRage, c.RageDuringHordeEventEnabled),
             new(SmartSettingId.SoulRagePill, combat, SmartSettingsText.SoulRagePill, c.RagePillEnabled),
             new(SmartSettingId.QuestRagePill, combat, SmartSettingsText.QuestRagePill, c.QuestRagePillEnabled, SmartSettingId.QuestAutomation),
+            new(SmartSettingId.BunnyPaw, combat, SmartSettingsText.BunnyPaw, c.BunnyPawEnabled),
+            new(SmartSettingId.DeathBringer, combat, SmartSettingsText.DeathBringer, c.DeathBringerEnabled),
+            new(SmartSettingId.CpsSpyglass, combat, SmartSettingsText.CpsSpyglass, c.CpsSpyglassEnabled),
             new(SmartSettingId.ChestPreparation, combat, SmartSettingsText.ChestPreparation, c.CraftBeforeChestHunt),
             new(SmartSettingId.ChestWithoutSoulEvent, combat, SmartSettingsText.ChestWithoutSoulEvent, c.BoostChestHuntWithoutSoulsEvent, SmartSettingId.ChestPreparation),
             new(SmartSettingId.ChestStack, combat, SmartSettingsText.ChestStack, c.StackCompassWithSpyglassForChestHunt, SmartSettingId.ChestPreparation),
 
             new(SmartSettingId.WhetstoneRecovery, materials, SmartSettingsText.WhetstoneRecovery, c.WhetstoneDuringMaterialRecovery),
+            new(SmartSettingId.SupplementalRefining, materials, SmartSettingsText.SupplementalRefining, c.SupplementalRefiningEnabled),
+            new(SmartSettingId.RefineryRawFarming, materials, SmartSettingsText.RefineryRawFarming, c.RefineryRawMaterialFarming, SmartSettingId.SupplementalRefining, SmartSettingId.MaterialTravel),
+            new(SmartSettingId.RefineryIdleStock, materials, SmartSettingsText.RefineryIdleStock, c.RefineryIdleStockEnabled, SmartSettingId.SupplementalRefining),
+            new(SmartSettingId.RefineryBuySlots, materials, SmartSettingsText.RefineryBuySlots, c.RefineryBuySlotsEnabled, SmartSettingId.SupplementalRefining),
+            new(SmartSettingId.RefinerySpeedup, materials, SmartSettingsText.RefinerySpeedup, c.RefinerySpeedupEnabled, SmartSettingId.SupplementalRefining),
             new(SmartSettingId.ResetPortalCooldown, materials, SmartSettingsText.ResetPortalCooldown, c.ResetPortalCooldown),
             new(SmartSettingId.FillWhetstone, materials, SmartSettingsText.FillWhetstone, c.FillWhetstoneMaterialsToCapacity, SmartSettingId.MaterialTravel),
             new(SmartSettingId.BoosterLinger, materials, SmartSettingsText.BoosterLinger, c.MaterialBoosterLingerEnabled),

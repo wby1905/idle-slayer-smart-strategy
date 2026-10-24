@@ -20,7 +20,7 @@ public sealed class Plugin : MelonMod
         IsApplicationQuitting = false;
         ModHelper.ModHelperMounted += instance => ModHelperInstance = instance;
         Config = new SmartConfig();
-        HarmonyInstance.PatchAll();
+        RuntimeCompatibility.InstallPatches(HarmonyInstance);
         AutoProgressionAscensionGuard.TryInstall(HarmonyInstance);
         SmartLog.Info(SmartLogCategory.Core,
             $"{SmartStrategyInfo.PluginName} v{SmartStrategyInfo.PluginVersion} loaded. " +
@@ -33,6 +33,7 @@ public sealed class Plugin : MelonMod
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
         if (sceneName != GameContracts.GameplaySceneName) return;
+        QuestApi.Reset();
         SmartSettingsUi.OnGameSceneLoaded();
         if (StrategyBehaviour.Current == null)
             ModUtils.RegisterComponent<StrategyBehaviour>();

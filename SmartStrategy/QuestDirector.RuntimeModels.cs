@@ -6,14 +6,14 @@ internal sealed partial class QuestDirector
 {
     private sealed class QuestProgressObservation
     {
-        internal QuestType Type { get; }
+        internal QuestKind Type { get; }
         internal int InitialProgress { get; }
         internal float FirstSeenAt { get; }
         internal int Progress { get; set; }
         internal float ProgressAt { get; set; }
         internal double ActiveElapsedSeconds { get; set; }
 
-        internal QuestProgressObservation(QuestType type, int progress, float progressAt)
+        internal QuestProgressObservation(QuestKind type, int progress, float progressAt)
         {
             Type = type;
             InitialProgress = progress;

@@ -252,7 +252,9 @@ internal static class MapEfficiencyEstimator
     }
 
     internal static MapEfficiency EvaluateForQuest(BaseMap map, Quest quest) =>
-        Evaluate(map, enemy => QuestEnemyMatches(enemy, quest), allowMembershipFallback: true);
+        QuestApi.CanProgressOnMap(quest, map)
+            ? Evaluate(map, enemy => QuestEnemyMatches(enemy, quest), allowMembershipFallback: true)
+            : new MapEfficiency(map, 0, 0, 0);
 
     internal static MapEfficiency EvaluateForAllEnemies(BaseMap map) => Evaluate(map, enemy =>
     {
@@ -532,15 +534,18 @@ internal static class MapEfficiencyEstimator
     {
         enemy = CurrentStage(enemy);
         if (!IsEnemyUnlocked(enemy) || quest == null) return false;
-        var rageCanHandleTarget = quest.questType == QuestType.KillEnemiesWithRageMode ||
+        var rageCanHandleTarget = quest.GetKind() == QuestKind.KillEnemiesWithRageMode ||
             QuestDirector.TargetCannotBeKilledWithArrows(quest);
-        if (quest.questType == QuestType.WindDashKills && !StrategyBehaviour.CanAutomateWithWindDash(enemy))
+        var rapidGiantAttackCanHandleTarget = enemy.isGiant &&
+            Plugin.Config?.GiantRapidAttackEnabled.Value == true;
+        if (quest.GetKind() == QuestKind.WindDashKills && !StrategyBehaviour.CanAutomateWithWindDash(enemy))
             return false;
-        if (Plugin.Config.AssumeBowAutomation.Value && !rageCanHandleTarget &&
+        if (Plugin.Config.AssumeBowAutomation.Value && !rageCanHandleTarget && !rapidGiantAttackCanHandleTarget &&
             !StrategyBehaviour.CanAutomateWithWindDash(enemy) &&
-            quest.questType != QuestType.WindDashKills && enemy.cantBeKilledWithArrows) return false;
-        if (quest.questType == QuestType.KillGiants) return enemy.isGiant;
-        if (quest.questType == QuestType.KillFlyers) return enemy.isFlying;
+            quest.GetKind() != QuestKind.WindDashKills && enemy.cantBeKilledWithArrows) return false;
+        if (quest.GetKind() == QuestKind.KillGiants) return enemy.isGiant;
+        if (quest.GetKind() == QuestKind.KillFlyers) return enemy.isFlying;
+        if (quest.GetKind() == QuestKind.KillEnemiesInLocation) return true;
         if (quest.enemyToKill != null || quest.enemyType != null)
             return CurrentOrBackwardStageMatches(enemy, quest.enemyToKill, quest.enemyType);
         return true;

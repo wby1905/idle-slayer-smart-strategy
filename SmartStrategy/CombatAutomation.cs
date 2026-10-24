@@ -63,6 +63,8 @@ public sealed partial class StrategyBehaviour
     private string _lastMovementReason = "Not evaluated";
     private string _lastJumpReason = "Not evaluated";
     private bool _automaticJumpHeld;
+    private PlayerMovement _automaticJumpPlayer;
+    private bool _nativeRageMovementOwned;
     private bool _automaticJumpForcedStateOverridden;
     private bool _automaticJumpYieldsToPriorityGiant;
     private bool _jumpTrackingLogged;
@@ -105,6 +107,20 @@ public sealed partial class StrategyBehaviour
     private void HandleSmartCombat()
     {
         var now = Time.unscaledTime;
+        if (NativeRageOwnsMovement())
+        {
+            YieldMovementToNativeRage();
+            return;
+        }
+        if (_nativeRageMovementOwned)
+        {
+            _nativeRageMovementOwned = false;
+            _nextCombatDecisionAt = 0;
+            _nextSelectedAbilityCheckAt = 0;
+            _nextJumpAttemptAt = now + 0.1f;
+            ResetSelectedAbilityAutomation();
+            ResetJumpMotionObservation();
+        }
         if (Plugin.Config.AutomaticCombatEnabled.Value && now >= _combatSuspendedUntil &&
             GameState.current == GameStates.BonusMode && MapController.instance?.changingMap != true &&
             now - _sceneReadyAt >= 1f)
@@ -116,7 +132,7 @@ public sealed partial class StrategyBehaviour
         }
 
         if (!Plugin.Config.AutomaticCombatEnabled.Value || now < _combatSuspendedUntil ||
-            GameState.current is not (GameStates.RunnerMode or GameStates.RageMode) ||
+            GameState.current != GameStates.RunnerMode ||
             MapController.instance?.changingMap == true || now - _sceneReadyAt < 1f)
         {
             ReleaseAutomaticJump();
@@ -165,7 +181,7 @@ public sealed partial class StrategyBehaviour
         var dashVerticalReach = ResolveWindDashVerticalReach();
         var bowModeFactor = ReadModeSoulFactor(PlayerInventory.instance?.soulsBonusBowList);
         var dashModeFactor = ReadModeSoulFactor(PlayerInventory.instance?.windDashSoulsBonus);
-        var hardBow = !hardWindDash && _questPlan?.Type == QuestType.KillEnemiesWithArrows;
+        var hardBow = !hardWindDash && _questPlan?.Type == QuestKind.KillEnemiesWithArrows;
         var bowScore = 0.0;
         var bowNearScore = 0.0;
         var dashScore = 0.0;
@@ -298,6 +314,59 @@ public sealed partial class StrategyBehaviour
         }
 
         ClearCombatDecision(visibleTargets == 0 ? "No active enemy is ahead" : "Current enemies are outside usable attack paths");
+    }
+
+    private static bool NativeRageOwnsMovement()
+    {
+        if (GameState.current == GameStates.RageMode) return true;
+        var rage = RageModeManager.instance;
+        return rage != null && rage.currentState != RageModeManager.RageModeStates.NotActive;
+    }
+
+    internal void YieldMovementToNativeRage()
+    {
+        // TryJump writes velocity without checking GameState. Native CheckAction skips Rage and
+        // ActivateRageMode switches the body to Kinematic, where an injected jump does not fall.
+        var player = _automaticJumpPlayer;
+        var ownedJump = player != null && player == PlayerMovement.instance &&
+            (_automaticJumpHeld || _automaticJumpForcedStateOverridden ||
+             _automaticJumpForceOverridden || _automaticJumpTrajectoryPending);
+        ReleaseAutomaticJump();
+        if (!_nativeRageMovementOwned && ownedJump)
+        {
+            // Clear only the unfinished jump we started, once, before native Rage takes over.
+            // Do not alter the mount's transform, gravity, or subsequent native movement.
+            try
+            {
+                player.isJumping = false;
+                player.jumpTimeCounter = 0;
+                var body = player.rigidBody;
+                if (body != null)
+                {
+                    var velocity = body.velocity;
+                    if (float.IsFinite(velocity.y) && velocity.y > 0)
+                        body.velocity = new Vector2(velocity.x, 0);
+                }
+            }
+            catch { /* A scene transition may destroy the player before the handoff. */ }
+        }
+        _automaticJumpTrajectoryPending = false;
+        _automaticJumpPlayer = null;
+        if (!_nativeRageMovementOwned)
+            SmartLog.Debug(SmartLogCategory.Combat,
+                "Yielded jump, Boost, Wind Dash and bow control to native Rage movement.");
+        _nativeRageMovementOwned = true;
+        _lastJumpReason = "Native Rage controls movement; automatic jumping is suspended";
+        SetCombatMode(SmartCombatMode.None, _lastJumpReason, log: false);
+        SetMovementMode(SmartMovementMode.None, _lastJumpReason);
+    }
+
+    private bool CanStartAutomaticJump(PlayerMovement player)
+    {
+        if (player == null || player.forceIdle || NativeRageOwnsMovement() ||
+            GameState.current is not (GameStates.RunnerMode or GameStates.BonusMode)) return false;
+        if (player.forceIsJumping && !_automaticJumpForcedStateOverridden) return false;
+        return player.rigidBody != null && player.rigidBody.bodyType == RigidbodyType2D.Dynamic;
     }
 
     private void RefreshCombatEnemyCache(float now)
@@ -863,7 +932,8 @@ public sealed partial class StrategyBehaviour
         try
         {
             var player = PlayerMovement.instance;
-            if (player == null) return;
+            if (!CanStartAutomaticJump(player)) return;
+            _automaticJumpPlayer = player;
             var maximumHold = Math.Clamp(Plugin.Config.AutomaticJumpMaximumHoldSeconds.Value, 0.25f, 0.3f);
             holdSeconds = Math.Clamp(holdSeconds, 0.025f, maximumHold);
             var maximumForceMultiplier = Math.Clamp(Plugin.Config.AutomaticJumpMaximumForceMultiplier.Value, 1f, 2.5f);
@@ -914,7 +984,7 @@ public sealed partial class StrategyBehaviour
 
     private void ReleaseAutomaticJump()
     {
-        if (!_automaticJumpHeld) return;
+        if (!_automaticJumpHeld && !_automaticJumpForcedStateOverridden && !_automaticJumpForceOverridden) return;
         try
         {
             RestoreAutomaticJumpForcedState();
@@ -935,7 +1005,7 @@ public sealed partial class StrategyBehaviour
         if (!_automaticJumpForcedStateOverridden) return;
         try
         {
-            var player = PlayerMovement.instance;
+            var player = _automaticJumpPlayer;
             if (player != null && player.forceIsJumping) player.forceIsJumping = false;
         }
         catch { /* Scene transitions rebuild PlayerMovement. */ }
@@ -983,7 +1053,7 @@ public sealed partial class StrategyBehaviour
         if (!_automaticJumpForceOverridden) return;
         try
         {
-            var player = PlayerMovement.instance;
+            var player = _automaticJumpPlayer;
             // Do not overwrite a simultaneous legitimate game/mod change.  Restore only the exact
             // temporary value this jump applied.
             if (player != null && Math.Abs(player.jumpForce - _automaticJumpAppliedForce) < 0.001f)
@@ -1810,6 +1880,9 @@ public sealed partial class StrategyBehaviour
     private void ResetSmartCombat(bool clearCache = false)
     {
         ReleaseAutomaticJump();
+        _automaticJumpPlayer = null;
+        _automaticJumpTrajectoryPending = false;
+        _nativeRageMovementOwned = false;
         _nextCombatDecisionAt = 0;
         _nextBowAttackAt = 0;
         _nextJumpAttemptAt = 0;

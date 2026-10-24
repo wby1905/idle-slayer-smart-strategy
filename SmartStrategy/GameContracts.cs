@@ -9,7 +9,7 @@ namespace SmartStrategy;
 /// </summary>
 internal static class GameContracts
 {
-    internal const int Revision = 1;
+    internal const int Revision = 2;
     internal const string GameplaySceneName = "Game";
     private const string InfoPanelButtonsPath =
         "UIManager/Safe Zone/Shop Panel/Wrapper/Info Panel/Info Panel/Viewport/Content/Buttons";

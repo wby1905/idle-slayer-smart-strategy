@@ -11,7 +11,6 @@ internal sealed partial class QuestDirector
     private readonly Dictionary<int, int> _rerollFailures = new();
     private readonly Dictionary<int, float> _deferredUntil = new();
     private float _nextScan;
-    private float _nextRefresh;
     private float _nextMutation;
     private int _lockedQuestId;
     private int _lockedProgress;
@@ -50,7 +49,7 @@ internal sealed partial class QuestDirector
     private readonly HashSet<int> _stalledDailyProtectionLogged = new();
     private float _nextActiveTimeTick;
     private float _lastActiveTimeTick = -1f;
-    private readonly Dictionary<QuestType, QuestRuntimeCalibration> _runtimeCalibrations = new();
+    private readonly Dictionary<QuestKind, QuestRuntimeCalibration> _runtimeCalibrations = new();
     private bool _runtimeCalibrationDirty;
     private float _nextRuntimeCalibrationPersistAt;
     private readonly Dictionary<string, int> _strategicUnlockBonuses = new(StringComparer.Ordinal);
@@ -73,7 +72,7 @@ internal sealed partial class QuestDirector
     private float _weeklyPostClaimReviewAt;
     private bool _weeklyPreferredTargetLogged;
     private bool _weeklyTargetStageInitialized;
-    private QuestType _weeklyPreferredTarget = QuestType.CompleteDailyQuests;
+    private QuestKind _weeklyPreferredTarget = QuestKind.CompleteDailyQuests;
     private readonly HashSet<int> _keptDailyReachableKillIds = new();
     private readonly HashSet<int> _keptDailyRageOpportunityIds = new();
     private readonly HashSet<int> _keptDailyPassiveCollectableIds = new();
@@ -97,7 +96,7 @@ internal sealed partial class QuestDirector
                                                                  IsActionable(entry));
 
     internal bool HasActiveWindDashKillQuest => _snapshot.Any(entry =>
-        IsActionable(entry) && entry.Quest.questType == QuestType.WindDashKills);
+        IsActionable(entry) && entry.Quest.GetKind() == QuestKind.WindDashKills);
 
     internal void TickActiveTime()
     {
@@ -131,12 +130,12 @@ internal sealed partial class QuestDirector
         if (quest == null) return false;
         try
         {
-            return quest.questType switch
+            return quest.GetKind() switch
             {
-                QuestType.BonusStage or QuestType.BonusStageSections => GameState.IsBonus(),
-                QuestType.ChestHuntChests => GameState.IsChestHunt(),
-                QuestType.CompleteAscendingHeights => GameState.IsAscendingHeights(),
-                QuestType.CompleteGrappleRuns => CraftableCatalog.Normalize(
+                QuestKind.BonusStage or QuestKind.BonusStageSections => GameState.IsBonus(),
+                QuestKind.ChestHuntChests => GameState.IsChestHunt(),
+                QuestKind.CompleteAscendingHeights => GameState.IsAscendingHeights(),
+                QuestKind.CompleteGrappleRuns => CraftableCatalog.Normalize(
                     (MapController.instance?.selectedMap?.id ?? string.Empty) +
                     (MapController.instance?.selectedMap?.name ?? string.Empty)).Contains("grapple"),
                 _ => GameState.current is GameStates.RunnerMode or GameStates.RageMode or GameStates.BattleMode
@@ -148,13 +147,13 @@ internal sealed partial class QuestDirector
     internal Quest FindActiveMaterialCollectionQuest()
     {
         foreach (var entry in _snapshot)
-            if (entry?.Quest?.questType == QuestType.GetMaterials && IsActionable(entry)) return entry.Quest;
+            if (entry?.Quest?.GetKind() == QuestKind.GetMaterials && IsActionable(entry)) return entry.Quest;
         return null;
     }
 
     internal Quest FindActiveCraftTemporaryItemsQuest()
     {
-        return _snapshot.Where(entry => entry?.Quest?.questType == QuestType.CraftTemporaryItems &&
+        return _snapshot.Where(entry => entry?.Quest?.GetKind() == QuestKind.CraftTemporaryItems &&
                                         IsActionable(entry))
             .OrderBy(entry => entry.Source == QuestSource.Daily ? 0 :
                               entry.Source == QuestSource.Weekly ? 1 : 2)
@@ -203,27 +202,28 @@ internal sealed partial class QuestDirector
     }
 
     private static bool SupportsParallelExecution(QuestPlan plan) => plan.Type is
-        QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or
-        QuestType.KillGiants or QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or
-        QuestType.KillEnemiesOfType or QuestType.KillShinyEnemies or QuestType.DoCriticals or
-        QuestType.GetMaterials or QuestType.CraftTemporaryItems or QuestType.UseRageMode or
-        QuestType.PickUpCoins or QuestType.PickUpGemstones or QuestType.PickUpDiamonds or
-        QuestType.PickUpEmeralds or QuestType.PickUpRubies or QuestType.PickUpSapphires or
-        QuestType.PickUpZyniums or QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or
-        QuestType.HitRandomGoldenBoxes or QuestType.GetCoinsFromRandomBox;
+        QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
+        QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
+        QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies or QuestKind.DoCriticals or
+        QuestKind.GetMaterials or QuestKind.CraftTemporaryItems or QuestKind.UseRageMode or
+        QuestKind.PickUpCoins or QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or
+        QuestKind.PickUpEmeralds or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or
+        QuestKind.PickUpZyniums or QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or
+        QuestKind.HitRandomGoldenBoxes or QuestKind.GetCoinsFromRandomBox;
 
     private static int ParallelExecutionPriority(QuestPlan plan)
     {
-        if (plan.Type == QuestType.KillEnemiesWithRageMode) return 0;
-        if (plan.Type == QuestType.UseRageMode || plan.RequiresRageForBowAutomation) return 1;
-        if (plan.Type == QuestType.CraftTemporaryItems) return 2;
+        if (plan.Type == QuestKind.KillEnemiesWithRageMode) return 0;
+        if (plan.Type == QuestKind.UseRageMode || plan.RequiresRageForBowAutomation) return 1;
+        if (plan.Type == QuestKind.CraftTemporaryItems) return 2;
         if (IsSpecificKillObjective(plan)) return 3;
-        if (plan.Type == QuestType.GetMaterials) return 4;
+        if (plan.Type == QuestKind.GetMaterials) return 4;
         return 5;
     }
 
     internal bool TickMaintenance()
     {
+        if (QuestManager.instance == null || QuestTypes.list == null) return false;
         var now = Time.unscaledTime;
         if (now < _questStateSettleUntil)
         {
@@ -296,7 +296,7 @@ internal sealed partial class QuestDirector
             _weeklyReplacementOriginalId = 0;
             _weeklyReplacementDeadline = 0f;
             _weeklyGeneratedReadyAt = now + RuntimeCadence.QuestGenerationSettleSeconds;
-            SetWeeklyPreferredTarget(QuestType.CompleteDailyQuests,
+            SetWeeklyPreferredTarget(QuestKind.CompleteDailyQuests,
                 $"Detected {_weeklyGeneratedRerollCandidates.Count} quests in a new Weekly set; restart from Complete Daily Quests");
             SmartLog.Debug(SmartLogCategory.Quest,
                 $"Detected a newly generated Weekly set; waiting {RuntimeCadence.QuestGenerationSettleSeconds:0.#}s before reroll evaluation.");
@@ -433,7 +433,7 @@ internal sealed partial class QuestDirector
                 var stalled = now - _lockedProgressAt >= Math.Max(20f, Plugin.Config.QuestStallSeconds.Value);
                 if (!stalled) return lockedPlan;
                 SmartLog.Info(SmartLogCategory.Quest,
-                    $"Quest stalled: type={locked.Quest.questType}, instanceId={locked.Quest.GetInstanceID()}, " +
+                    $"Quest stalled: type={locked.Quest.GetKind()}, instanceId={locked.Quest.GetInstanceID()}, " +
                     $"noProgressFor={now - _lockedProgressAt:0}s; selecting a new primary quest.");
                 _deferredUntil[_lockedQuestId] = now + Math.Max(60f, Plugin.Config.QuestStallSeconds.Value);
                 // The portfolio built at the start of this cycle still contains the newly deferred quest. Recompute it
@@ -524,26 +524,28 @@ internal sealed partial class QuestDirector
         if (plan.StrategicUnlockBonus > 0) return 5;
         // A Portal quest preempts only when cooldown is actually ready; execution releases its lock immediately after
         // opening. While cooling down it stays low priority and cannot leave kill or material quests waiting.
-        if (plan.Source == QuestSource.Weekly && plan.Type == QuestType.GoThroughPortals &&
+        if (plan.Source == QuestSource.Weekly && plan.Type == QuestKind.GoThroughPortals &&
             Plugin.Config.WeeklyPreferredPairStrategy.Value &&
-            _weeklyPreferredTarget == QuestType.GoThroughPortals && PortalReadyForWeeklyQuest()) return 4;
+            _weeklyPreferredTarget == QuestKind.GoThroughPortals && PortalReadyForWeeklyQuest()) return 4;
+        if (plan.Type == QuestKind.VisitLocation) return PortalReadyForWeeklyQuest() ? 3 : 0;
         if (IsSpecificKillObjective(plan)) return 3;
-        if (plan.Type == QuestType.GetMaterials) return 2;
+        if (plan.Type == QuestKind.GetMaterials) return 2;
         // Unspecified enemy, bow, character, Rage, and Shiny kills all progress while pursuing concrete targets or materials.
         if (NeedsEnemyMap(plan.Type)) return 1;
         if (plan.TargetMap != null) return 1;
         return 0;
     }
 
-    private static bool IsBackgroundOnlyOpportunity(QuestType type) => type is
-        QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or
-        QuestType.HitRandomGoldenBoxes or QuestType.GetCoinsFromRandomBox or
-        QuestType.DoCriticals;
+    private static bool IsBackgroundOnlyOpportunity(QuestKind type) => type is
+        QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or
+        QuestKind.HitRandomGoldenBoxes or QuestKind.GetCoinsFromRandomBox or
+        QuestKind.DoCriticals;
 
     private static bool IsSpecificKillObjective(QuestPlan plan)
     {
         if (plan?.Quest == null) return false;
-        if (plan.Type is QuestType.KillFlyers or QuestType.KillGiants or QuestType.KillEnemiesOfType) return true;
+        if (plan.Type is QuestKind.KillFlyers or QuestKind.KillGiants or QuestKind.KillEnemiesOfType or
+            QuestKind.KillEnemiesInLocation) return true;
         try { return plan.Quest.enemyToKill != null || plan.Quest.enemyType != null; }
         catch { return false; }
     }
@@ -593,7 +595,8 @@ internal sealed partial class QuestDirector
             $"Quest plan: source={plan.Source}, instanceId={plan.InstanceId}, progress={plan.Current}/{plan.Goal}, type={plan.Type}, " +
                 $"map={plan.TargetMap?.name ?? "any"}, expected={FormatDuration(plan.ExpectedSeconds)}, density={plan.TargetEnemiesPerPattern:0.##}/pattern, " +
                 $"map utility={plan.MapUtility:0.###}, joint quests={plan.JointQuestCount}, unlock bonus={plan.StrategicUnlockBonus}, " +
-                $"targets Giants={plan.TargetsGiants}, collab={plan.IsCollab}, Rage required for bow={plan.RequiresRageForBowAutomation}, score={plan.Score}.");
+                $"targets Giants={plan.TargetsGiants}, raw quest credit={plan.UsesUnboostedProgress}, " +
+                $"Rage required for bow={plan.RequiresRageForBowAutomation}, score={plan.Score}.");
         return plan;
     }
 
@@ -609,13 +612,25 @@ internal sealed partial class QuestDirector
         _nextScan = 0f;
         _nextPortfolioScan = 0f;
         _nextPrimaryPreemptionScan = 0f;
-        _nextRefresh = 0f;
         InvalidatePlanCaches();
     }
 
     internal void HoldPlanDuringMaterialRecovery()
     {
         if (_lockedQuestId != 0) _lockedProgressAt = Time.unscaledTime;
+    }
+
+    internal void SuspendAfterFailure(float retryAt)
+    {
+        _snapshot.Clear();
+        _lockedQuestId = 0;
+        _portfolio = null;
+        _nextScan = retryAt;
+        _questStateSettleUntil = retryAt;
+        _nextPortfolioScan = 0;
+        _snapshotPlanSignature = string.Empty;
+        _snapshotPlanRevision++;
+        InvalidatePlanCaches();
     }
 
     private QuestPlan MakePlanCached(QuestEntry entry, PortfolioMapChoice portfolio)
@@ -660,8 +675,9 @@ internal sealed partial class QuestDirector
                 var actionable = IsActionable(entry) ? 1 : 0;
                 var enemyId = quest.enemyToKill?.GetInstanceID() ?? 0;
                 var enemyTypeId = quest.enemyType?.GetInstanceID() ?? 0;
-                parts.Add($"{quest.GetInstanceID()}:{(int)entry.Source}:{(int)quest.questType}:" +
-                          $"{quest.questGoal}:{actionable}:{enemyId}:{enemyTypeId}");
+                parts.Add($"{quest.GetInstanceID()}:{(int)entry.Source}:{(int)quest.GetKind()}:" +
+                          $"{quest.questGoal}:{actionable}:{enemyId}:{enemyTypeId}:" +
+                          $"{quest.map?.GetInstanceID() ?? 0}:{quest.mapEvent?.GetInstanceID() ?? 0}:{quest.eventSet}");
             }
             catch
             {
@@ -698,8 +714,7 @@ internal sealed partial class QuestDirector
         }
         catch (Exception ex)
         {
-            SmartLog.Debug(SmartLogCategory.Quest,
-                $"Daily quest scan failed: {ex.GetType().Name}: {ex.Message}");
+            throw new InvalidOperationException("Daily quest snapshot failed; regeneration is suspended.", ex);
         }
 
         try
@@ -709,38 +724,22 @@ internal sealed partial class QuestDirector
         }
         catch (Exception ex)
         {
-            SmartLog.Debug(SmartLogCategory.Quest,
-                $"Weekly quest scan failed: {ex.GetType().Name}: {ex.Message}");
+            throw new InvalidOperationException("Weekly quest snapshot failed; regeneration is suspended.", ex);
         }
 
         try
         {
-            var list = ResolveQuestList();
-            if (list != null)
+            foreach (var quest in Resources.FindObjectsOfTypeAll<Quest>())
             {
-                var data = list.lastScrollListData;
-                var panelOpen = list.questsScrollRect != null && list.questsScrollRect.gameObject.activeInHierarchy;
-                if (Time.unscaledTime >= _nextRefresh && !panelOpen)
-                {
-                    _nextRefresh = Time.unscaledTime + 30f;
-                    list.RefreshList();
-                    data = list.lastScrollListData;
-                }
-                if (data != null)
-                {
-                    for (var i = 0; i < data.Count; i++)
-                    {
-                        var quest = data[i];
-                        if (quest is DailyQuest || quest is WeeklyQuest) continue;
-                        AddQuest(quest, QuestSource.Normal, ids);
-                    }
-                }
+                if (quest == null || quest.TryCast<DailyQuest>() != null || quest.TryCast<WeeklyQuest>() != null)
+                    continue;
+                if (!QuestApi.IsSupported(quest) || !quest.CanBeCompletedOrClaimed()) continue;
+                AddQuest(quest, quest.mapEvent != null ? QuestSource.Event : QuestSource.Normal, ids);
             }
         }
         catch (Exception ex)
         {
-            SmartLog.Debug(SmartLogCategory.Quest,
-                $"Normal quest-list scan failed: {ex.GetType().Name}: {ex.Message}");
+            throw new InvalidOperationException("Normal quest snapshot failed; quest automation is suspended.", ex);
         }
         ObserveRuntimeProgress();
         UpdateSnapshotPlanRevision();
@@ -771,7 +770,7 @@ internal sealed partial class QuestDirector
             try { id = quest.GetInstanceID(); }
             catch { continue; }
             active.Add(id);
-            var type = quest.questType;
+            var type = quest.GetKind();
             var progress = Math.Max(0, quest.questCurrentGoal);
             if (!_progressObservations.TryGetValue(id, out var observation) || observation.Type != type ||
                 progress < observation.Progress)
@@ -786,7 +785,8 @@ internal sealed partial class QuestDirector
             if (elapsed >= 0.2f && elapsed <= 1800f && delta > 0)
             {
                 var secondsPerProgress = elapsed / delta;
-                if (double.IsFinite(secondsPerProgress) && secondsPerProgress > 0)
+                if (double.IsFinite(secondsPerProgress) && secondsPerProgress > 0 &&
+                    !QuestApi.UsesUnboostedProgress(quest))
                 {
                     if (!_runtimeCalibrations.TryGetValue(type, out var calibration))
                     {
@@ -823,7 +823,7 @@ internal sealed partial class QuestDirector
         foreach (var token in data.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
             var parts = token.Split(',');
-            if (parts.Length != 3 || !Enum.TryParse<QuestType>(parts[0], true, out var type) ||
+            if (parts.Length != 3 || !Enum.TryParse<QuestKind>(parts[0], true, out var type) ||
                 !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ||
                 !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var samples) ||
                 !double.IsFinite(seconds) || seconds <= 0 || samples <= 0) continue;
@@ -834,8 +834,8 @@ internal sealed partial class QuestDirector
     private static void ObserveEnemyPatternRate(QuestEntry entry, int progressDelta, float elapsed)
     {
         var quest = entry?.Quest;
-        if (quest == null || quest.questType != QuestType.KillEnemies || !IsUnrestrictedKillObjective(quest) ||
-            IsCollabQuest(quest) || progressDelta <= 0 || elapsed < 0.2f) return;
+        if (quest == null || quest.GetKind() != QuestKind.KillEnemies || !IsUnrestrictedKillObjective(quest) ||
+            QuestApi.UsesUnboostedProgress(quest) || progressDelta <= 0 || elapsed < 0.2f) return;
         try
         {
             var map = MapController.instance?.selectedMap;
@@ -923,7 +923,7 @@ internal sealed partial class QuestDirector
             ? $" (slow outlier accepted as {FormatDuration(acceptedSeconds)})"
             : string.Empty;
         SmartLog.Debug(SmartLogCategory.Quest,
-            $"Recorded Daily completion sample: type={quest.questType}, normalized={FormatDuration(normalizedSeconds)}{clipped}, " +
+            $"Recorded Daily completion sample: type={quest.GetKind()}, normalized={FormatDuration(normalizedSeconds)}{clipped}, " +
             $"current reroll threshold={FormatDuration(DailyRerollThresholdSeconds())}.");
     }
 
@@ -957,25 +957,6 @@ internal sealed partial class QuestDirector
                $"robust ceiling={Math.Max(60, Plugin.Config.DailyRerollExpectedSeconds.Value):0}s, samples={count}";
     }
 
-    private static QuestsList ResolveQuestList()
-    {
-        if (IsLoadedSceneComponent(QuestsList.instance)) return QuestsList.instance;
-        foreach (var list in Resources.FindObjectsOfTypeAll<QuestsList>())
-            if (IsLoadedSceneComponent(list)) return list;
-        return null;
-    }
-
-    private static bool IsLoadedSceneComponent(Component component)
-    {
-        if (component == null || component.gameObject == null) return false;
-        try
-        {
-            var scene = component.gameObject.scene;
-            return scene.IsValid() && scene.isLoaded;
-        }
-        catch { return false; }
-    }
-
     private static bool IsActiveGeneratedQuest(Quest quest)
     {
         if (quest == null) return false;
@@ -993,6 +974,8 @@ internal sealed partial class QuestDirector
 
     private void AddQuest(Quest quest, QuestSource source, HashSet<int> ids)
     {
+        // Keep unknown active Daily/Weekly entries in the snapshot so they are not mistaken for
+        // empty slots and regenerated. Action eligibility is checked independently.
         if (quest == null || quest.isClaimed) return;
         var id = quest.GetInstanceID();
         if (!ids.Add(id)) return;
@@ -1003,7 +986,6 @@ internal sealed partial class QuestDirector
     {
         _questStateSettleUntil = Time.unscaledTime + Math.Max(0.5f, seconds);
         _nextScan = _questStateSettleUntil;
-        _nextRefresh = 0f;
         _nextPortfolioScan = 0f;
         _portfolio = null;
         if (removedQuestId != 0)
@@ -1018,11 +1000,13 @@ internal sealed partial class QuestDirector
         foreach (var entry in _snapshot)
         {
             var quest = entry.Quest;
-            if (quest == null || quest.isClaimed) continue;
+            if (quest == null || quest.isClaimed || !QuestApi.IsSupported(quest)) continue;
             try
             {
-                if (!quest.CanBeClaimed()) continue;
-                var claimedType = quest.questType;
+                // CanBeClaimed checks only progress and claimed state. EventAvailable additionally
+                // checks the live event window and the native EventQuestSet.Unlocked requirement.
+                if (!QuestApi.EventAvailable(quest) || !quest.CanBeClaimed()) continue;
+                var claimedType = quest.GetKind();
                 quest.Claim();
                 if (entry.Source == QuestSource.Daily) RecordCompletedDailyDuration(quest);
                 SmartLog.Info(SmartLogCategory.Quest,
@@ -1045,7 +1029,7 @@ internal sealed partial class QuestDirector
                     // Some Weeklies update authoritative data before a destroyed UI object throws a trailing exception.
                     if (quest != null && quest.isClaimed)
                     {
-                        var claimedType = quest.questType;
+                        var claimedType = quest.GetKind();
                         if (entry.Source == QuestSource.Daily) RecordCompletedDailyDuration(quest);
                         SmartLog.Info(SmartLogCategory.Quest,
                             $"Claimed completed quest after authoritative state updated despite a trailing UI exception; " +
@@ -1064,7 +1048,7 @@ internal sealed partial class QuestDirector
                 }
                 catch { /* Preserve the original error when authoritative state cannot be confirmed. */ }
                 SmartLog.Warning(SmartLogCategory.Quest,
-                    $"Unable to claim quest type={quest?.questType}; skipping this cycle: {ex.GetType().Name}: {ex.Message}");
+                    $"Unable to claim quest type={quest?.GetKind()}; skipping this cycle: {ex.GetType().Name}: {ex.Message}");
             }
         }
         return false;
@@ -1151,14 +1135,14 @@ internal sealed partial class QuestDirector
         var weeklyTargetStrategy = Plugin.Config.WeeklyPreferredPairStrategy.Value;
         var preferredWeekly = weeklyTargetStrategy
             ? _snapshot.Where(x => x.Source == QuestSource.Weekly && x.Quest != null &&
-                                   !x.Quest.isClaimed && IsCurrentWeeklyTarget(x.Quest.questType)).ToArray()
+                                   !x.Quest.isClaimed && IsCurrentWeeklyTarget(x.Quest.GetKind())).ToArray()
             : Array.Empty<QuestEntry>();
         if (preferredWeekly.Length > 0)
         {
             if (!_weeklyPreferredTargetLogged)
             {
                 _weeklyPreferredTargetLogged = true;
-                var types = string.Join(" + ", preferredWeekly.Select(x => x.Quest.questType).Distinct());
+                var types = string.Join(" + ", preferredWeekly.Select(x => x.Quest.GetKind()).Distinct());
                 SmartLog.Info(SmartLogCategory.Quest,
                     $"Preserved the current Weekly phase target ({types}); other slots in this set will not reroll until it is claimed.");
             }
@@ -1172,10 +1156,10 @@ internal sealed partial class QuestDirector
         var worstCostRatio = -1.0;
         foreach (var entry in _snapshot)
         {
-            if (entry.Source == QuestSource.Normal || !IsActionable(entry)) continue;
+            if (entry.Source is not (QuestSource.Daily or QuestSource.Weekly) || !IsActionable(entry)) continue;
             var quest = entry.Quest;
             var id = quest.GetInstanceID();
-            if (entry.Source == QuestSource.Daily && IsPassiveCollectableDailyType(quest.questType))
+            if (entry.Source == QuestSource.Daily && IsPassiveCollectableDailyType(quest.GetKind()))
             {
             // Coins and map-agnostic gemstones complete naturally during kill, material, and other quest routes, so their
             // marginal route time is zero. Comparing isolated collection history with the global threshold would turn
@@ -1183,11 +1167,11 @@ internal sealed partial class QuestDirector
                 RemoveGeneratedRerollCandidate(entry.Source, id);
                 if (_keptDailyPassiveCollectableIds.Add(id))
                     SmartLog.Debug(SmartLogCategory.Quest,
-                        $"Keeping passive Daily quest {quest.questType} at {quest.questCurrentGoal}/{quest.questGoal}; it progresses alongside the current route.");
+                        $"Keeping passive Daily quest {quest.GetKind()} at {quest.questCurrentGoal}/{quest.questGoal}; it progresses alongside the current route.");
                 continue;
             }
             if (entry.Source == QuestSource.Weekly && weeklyTargetStrategy &&
-                (IsCurrentWeeklyTarget(quest.questType) || preferredWeekly.Length > 0))
+                (IsCurrentWeeklyTarget(quest.GetKind()) || preferredWeekly.Length > 0))
             {
             // Freeze the whole set once the current phase target appears. Rerolling another slot into the next phase early
             // would let Portal quests preempt permanently at the start of every set.
@@ -1202,15 +1186,15 @@ internal sealed partial class QuestDirector
             var stalledProtectedDaily = entry.Source == QuestSource.Daily &&
                                         IsStalledDailyEventQuest(quest);
             var forcedExistingDailyCandidate = entry.Source == QuestSource.Daily &&
-                                               (ShouldForceReroll(quest.questType, QuestSource.Daily) ||
+                                               (ShouldForceReroll(quest.GetKind(), QuestSource.Daily) ||
                                                 stalledProtectedDaily ||
-                                                quest.questType == QuestType.KillEnemiesWithRageMode);
+                                                quest.GetKind() == QuestKind.KillEnemiesWithRageMode);
             if (!generatedCandidate && !forcedExistingDailyCandidate) continue;
             var seekingWeeklyTarget = entry.Source == QuestSource.Weekly && weeklyTargetStrategy &&
                                        preferredWeekly.Length == 0;
             var target = ResolveTargetMap(quest, out var density);
-            var noStandardEnemyTarget = NeedsEnemyMap(quest.questType) && (target == null || density <= 0);
-            if (entry.Source == QuestSource.Daily && quest.questType == QuestType.GetMaterials &&
+            var noStandardEnemyTarget = NeedsEnemyMap(quest.GetKind()) && (target == null || density <= 0);
+            if (entry.Source == QuestSource.Daily && quest.GetKind() == QuestKind.GetMaterials &&
                 target != null && density > 0 && !stalledProtectedDaily)
             {
                 // Material quests progress on the same kills used by normal quests, staff supply and
@@ -1223,7 +1207,7 @@ internal sealed partial class QuestDirector
                         $"Keeping parallel material Daily at {quest.questCurrentGoal}/{quest.questGoal}; map={target.name}, shared with quest and supply kills.");
                 continue;
             }
-            if (entry.Source == QuestSource.Daily && quest.questType == QuestType.CraftTemporaryItems)
+            if (entry.Source == QuestSource.Daily && quest.GetKind() == QuestKind.CraftTemporaryItems)
             {
                 var remainingCrafts = Math.Max(0, quest.questGoal - quest.questCurrentGoal);
                 if (StrategyBehaviour.CanCompleteCraftQuestWithDragonEggs(remainingCrafts))
@@ -1247,7 +1231,7 @@ internal sealed partial class QuestDirector
                 RemoveGeneratedRerollCandidate(entry.Source, id);
                 if (_keptDailyReachableKillIds.Add(id))
                     SmartLog.Debug(SmartLogCategory.Quest,
-                        $"Keeping reachable Daily kill quest {quest.questType} at {quest.questCurrentGoal}/{quest.questGoal}; map={target.name}.");
+                        $"Keeping reachable Daily kill quest {quest.GetKind()} at {quest.questCurrentGoal}/{quest.questGoal}; map={target.name}.");
                 continue;
             }
             var ratio = quest.questGoal <= 0 ? 0 : quest.questCurrentGoal * 100.0 / quest.questGoal;
@@ -1258,13 +1242,13 @@ internal sealed partial class QuestDirector
                 {
             // Event quests remain candidates for reevaluation after stalling; other quests retain hard progress protection
             // to avoid wasting valuable kill progress.
-                    if (entry.Source != QuestSource.Daily || !IsStallSensitiveDailyType(quest.questType))
+                    if (entry.Source != QuestSource.Daily || !IsStallSensitiveDailyType(quest.GetKind()))
                         RemoveGeneratedRerollCandidate(entry.Source, id);
                     continue;
                 }
                 if (_stalledDailyProtectionLogged.Add(id))
                     SmartLog.Debug(SmartLogCategory.Quest,
-                        $"Released Daily progress protection after a stall: type={quest.questType}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
+                        $"Released Daily progress protection after a stall: type={quest.GetKind()}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
                         $"stall={Math.Max(20f, Plugin.Config.QuestStallSeconds.Value):0}s.");
             }
             var expectedSeconds = EstimateSeconds(quest, entry.Source, target, density);
@@ -1276,7 +1260,7 @@ internal sealed partial class QuestDirector
                 : Plugin.Config.WeeklyRerollDifficultyThreshold.Value;
             thresholdSeconds *= Math.Clamp(legacyScale, 1, 100) / 45.0;
             var dailyRageQuest = entry.Source == QuestSource.Daily &&
-                                 quest.questType == QuestType.KillEnemiesWithRageMode;
+                                 quest.GetKind() == QuestKind.KillEnemiesWithRageMode;
             var rageKeepReason = string.Empty;
             var rerollDailyRageForCost = dailyRageQuest &&
                                          ShouldRerollDailyRageQuest(quest, density, out rageKeepReason);
@@ -1288,7 +1272,7 @@ internal sealed partial class QuestDirector
             var force = seekingWeeklyTarget || noStandardEnemyTarget || stalledProtectedDaily ||
                         rerollDailyRageForCost ||
                         exceedsAdaptiveDailyThreshold ||
-                        ShouldForceReroll(quest.questType, entry.Source);
+                        ShouldForceReroll(quest.GetKind(), entry.Source);
             if (!force && expectedSeconds < thresholdSeconds)
             {
                 if (!dailyRageQuest) RemoveGeneratedRerollCandidate(entry.Source, id);
@@ -1359,12 +1343,12 @@ internal sealed partial class QuestDirector
             if (BecameInactive(daily))
             {
                 SmartLog.Debug(SmartLogCategory.Quest,
-                    $"Daily reroll replaced authoritative state before a trailing UI exception: type={quest.questType}, exception={ex.GetType().Name}.");
+                    $"Daily reroll replaced authoritative state before a trailing UI exception: type={quest.GetKind()}, exception={ex.GetType().Name}.");
                 return CompleteDailyReroll(quest, expected, true, activeBefore);
             }
             CountFailure(quest);
             SmartLog.Warning(SmartLogCategory.Quest,
-                $"Daily reroll failed for type={quest.questType}: {ex.GetType().Name}: {ex.Message}");
+                $"Daily reroll failed for type={quest.GetKind()}: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
@@ -1403,12 +1387,12 @@ internal sealed partial class QuestDirector
             if (BecameInactive(weekly))
             {
                 SmartLog.Debug(SmartLogCategory.Quest,
-                    $"Weekly reroll replaced authoritative state before a trailing UI exception: type={quest.questType}, exception={ex.GetType().Name}.");
+                    $"Weekly reroll replaced authoritative state before a trailing UI exception: type={quest.GetKind()}, exception={ex.GetType().Name}.");
                 return CompleteWeeklyReroll(quest, expected, true, activeBefore);
             }
             CountFailure(quest);
             SmartLog.Warning(SmartLogCategory.Quest,
-                $"Weekly reroll failed for type={quest.questType}: {ex.GetType().Name}: {ex.Message}");
+                $"Weekly reroll failed for type={quest.GetKind()}: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
@@ -1429,7 +1413,7 @@ internal sealed partial class QuestDirector
         _dailyReplacementOriginalId = quest.GetInstanceID();
         _dailyReplacementDeadline = Time.unscaledTime + RuntimeCadence.QuestReplacementSettleTimeoutSeconds;
         SmartLog.Info(SmartLogCategory.Quest,
-            $"Rerolled Daily quest: type={quest.questType}, instanceId={quest.GetInstanceID()}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
+            $"Rerolled Daily quest: type={quest.GetKind()}, instanceId={quest.GetInstanceID()}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
             $"expected={FormatDuration(expected)}, threshold={FormatDuration(DailyRerollThresholdSeconds())}, chain={_dailyRerollChain}, " +
             $"since claim={_dailyRerollsSinceClaim}/{Math.Max(0, Plugin.Config.MaximumDailyRerollsPerSession.Value)}, session={_dailyRerolls}, " +
             $"recovered after UI exception={recoveredFromUiException}.");
@@ -1451,14 +1435,14 @@ internal sealed partial class QuestDirector
         _weeklyReplacementDeadline = Time.unscaledTime + RuntimeCadence.QuestReplacementSettleTimeoutSeconds;
         var chainCap = Math.Max(0, Plugin.Config.MaximumConsecutiveWeeklyRerolls.Value);
         var seekingTarget = Plugin.Config.WeeklyPreferredPairStrategy.Value &&
-            !IsCurrentWeeklyTarget(quest.questType);
+            !IsCurrentWeeklyTarget(quest.GetKind());
         var forcedPastChainCap = _weeklyRerollChain > chainCap &&
-            (seekingTarget || ShouldForceReroll(quest.questType, QuestSource.Weekly));
+            (seekingTarget || ShouldForceReroll(quest.GetKind(), QuestSource.Weekly));
         var sessionCap = seekingTarget
             ? Math.Max(0, Plugin.Config.WeeklyPreferredPairRerollLimit.Value)
             : Math.Max(0, Plugin.Config.MaximumWeeklyRerollsPerSession.Value);
         SmartLog.Info(SmartLogCategory.Quest,
-            $"Rerolled Weekly quest: type={quest.questType}, instanceId={quest.GetInstanceID()}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
+            $"Rerolled Weekly quest: type={quest.GetKind()}, instanceId={quest.GetInstanceID()}, progress={quest.questCurrentGoal}/{quest.questGoal}, " +
             $"expected={FormatDuration(expected)}, chain={_weeklyRerollChain}/{chainCap}, seeking target={seekingTarget}, target={_weeklyPreferredTarget}, " +
             $"forced past chain cap={forcedPastChainCap}, session={_weeklyRerolls}/{sessionCap}, recovered after UI exception={recoveredFromUiException}.");
         WaitForQuestState(5f, quest.GetInstanceID());
@@ -1528,10 +1512,11 @@ internal sealed partial class QuestDirector
         if (quest == null) return false;
         try
         {
+            if (!QuestApi.IsSupported(quest) || !QuestApi.EventAvailable(quest)) return false;
             // The native quest remains CanBeCompleted() even when the current Ascension has not
             // purchased Essence of Zynium.  In that state no Zynium can spawn, so treating the
             // quest as actionable only wastes Necklace of Collectables materials forever.
-            if (!CanProgressCollectableQuest(quest.questType)) return false;
+            if (!CanProgressCollectableQuest(quest.GetKind())) return false;
             if (entry.Source == QuestSource.Daily && quest is DailyQuest daily && !daily.CheckIfIsValid())
                 return false;
             return quest.CanBeCompleted();
@@ -1539,9 +1524,9 @@ internal sealed partial class QuestDirector
         catch { return false; }
     }
 
-    internal static bool CanProgressCollectableQuest(QuestType type)
+    internal static bool CanProgressCollectableQuest(QuestKind type)
     {
-        if (type != QuestType.PickUpZyniums) return true;
+        if (type != QuestKind.PickUpZyniums) return true;
         try
         {
             var inventory = PlayerInventory.instance;
@@ -1552,12 +1537,12 @@ internal sealed partial class QuestDirector
 
     private void LogUnavailableZyniumQuest()
     {
-        if (Time.unscaledTime < _nextZyniumUnavailableLogAt || CanProgressCollectableQuest(QuestType.PickUpZyniums))
+        if (Time.unscaledTime < _nextZyniumUnavailableLogAt || CanProgressCollectableQuest(QuestKind.PickUpZyniums))
             return;
         foreach (var entry in _snapshot)
         {
             var quest = entry?.Quest;
-            if (quest == null || quest.isClaimed || quest.questType != QuestType.PickUpZyniums ||
+            if (quest == null || quest.isClaimed || quest.GetKind() != QuestKind.PickUpZyniums ||
                 quest.questCurrentGoal >= quest.questGoal) continue;
             _nextZyniumUnavailableLogAt = Time.unscaledTime + 60f;
             SmartLog.Info(SmartLogCategory.Quest,
@@ -1572,16 +1557,18 @@ internal sealed partial class QuestDirector
         var quest = entry.Quest;
         // Wind Dash kill quests progress only passively with the player's selected ability. They never lock, travel,
         // craft boosters, or join map planning; Daily and Weekly versions reroll once native eligibility is available.
-        if (quest.questType == QuestType.WindDashKills) return null;
+        if (quest.GetKind() == QuestKind.WindDashKills) return null;
         // The first phase of a new set waits only for Complete Daily Quests. A randomly present Portal Weekly cannot run
         // until the Daily-type Weekly is claimed and Portal becomes the finishing phase.
-        if (entry.Source == QuestSource.Weekly && quest.questType == QuestType.GoThroughPortals &&
+        if (entry.Source == QuestSource.Weekly && quest.GetKind() == QuestKind.GoThroughPortals &&
             Plugin.Config.WeeklyPreferredPairStrategy.Value &&
-            _weeklyPreferredTarget != QuestType.GoThroughPortals) return null;
+            _weeklyPreferredTarget != QuestKind.GoThroughPortals) return null;
         var target = ResolveTargetMap(quest, out var density);
         var strategicUnlockBonus = StrategicUnlockBonus(quest);
         var jointQuestCount = 0;
-        if (portfolio?.Map != null && strategicUnlockBonus <= 0)
+        var requiredMap = QuestApi.RequiredMap(quest);
+        if (portfolio?.Map != null && strategicUnlockBonus <= 0 &&
+            (requiredMap == null || MapEfficiencyEstimator.SameMap(requiredMap, portfolio.Map)))
         {
             if (portfolio.TryGetEstimate(quest, out var jointEstimate) &&
                 MapEfficiencyEstimator.EffectiveDensity(jointEstimate) > 0)
@@ -1598,7 +1585,7 @@ internal sealed partial class QuestDirector
             }
         }
         // Bonus-Stage-only enemies do not belong to a standard map and cannot hold the primary lock or block reachable travel.
-        if (NeedsTargetMap(quest.questType) && (target == null || density <= 0)) return null;
+        if (NeedsTargetMap(quest.GetKind()) && (target == null || density <= 0)) return null;
         var expectedSeconds = EstimateSeconds(quest, entry.Source, target, density);
         var goal = Math.Max(1, quest.questGoal);
         var ratio = Math.Clamp(quest.questCurrentGoal / (double)goal, 0, 1);
@@ -1606,6 +1593,7 @@ internal sealed partial class QuestDirector
         {
             QuestSource.Daily => 125,
             QuestSource.Normal => quest.unlocksUpgrade != null ? 160 : 145,
+            QuestSource.Event => 145,
             QuestSource.Weekly => 80,
             _ => 70
         };
@@ -1623,9 +1611,27 @@ internal sealed partial class QuestDirector
     private BaseMap ResolveTargetMap(Quest quest, out double targetEnemiesPerPattern)
     {
         targetEnemiesPerPattern = 0;
-        if (quest == null || !NeedsTargetMap(quest.questType)) return null;
+        if (quest == null || !NeedsTargetMap(quest.GetKind())) return null;
+        var requiredMap = QuestApi.RequiredMap(quest);
+        if (requiredMap != null)
+        {
+            if (!IsStandardAvailableMap(requiredMap)) return null;
+            if (quest.GetKind() == QuestKind.VisitLocation)
+            {
+                var controller = MapController.instance;
+                if (MapEfficiencyEstimator.SameMap(requiredMap, controller?.selectedMap) &&
+                    (controller?.maps == null || !controller.maps.Any(map =>
+                        IsStandardAvailableMap(map) && !MapEfficiencyEstimator.SameMap(map, requiredMap))))
+                    return null;
+                targetEnemiesPerPattern = 1; // A visit is an arrival action, not a monster-density estimate.
+                return requiredMap;
+            }
+            var requiredEstimate = MapEfficiencyEstimator.EvaluateForQuest(requiredMap, quest);
+            targetEnemiesPerPattern = MapEfficiencyEstimator.EffectiveDensity(requiredEstimate);
+            return targetEnemiesPerPattern > 0 ? requiredMap : null;
+        }
         var remaining = Math.Max(1, quest.questGoal - quest.questCurrentGoal);
-        var efficiency = quest.questType == QuestType.GetMaterials
+        var efficiency = quest.GetKind() == QuestKind.GetMaterials
             ? MapEfficiencyEstimator.BestForAnyMaterial(remaining)
             : IsUnrestrictedKillObjective(quest)
                 ? MapEfficiencyEstimator.BestForPassiveKillAndMaterials(quest)
@@ -1635,7 +1641,8 @@ internal sealed partial class QuestDirector
         return efficiency.Map;
     }
 
-    private static bool NeedsTargetMap(QuestType type) => NeedsEnemyMap(type) || type == QuestType.GetMaterials;
+    private static bool NeedsTargetMap(QuestKind type) =>
+        NeedsEnemyMap(type) || type is QuestKind.GetMaterials or QuestKind.VisitLocation;
 
     private PortfolioMapChoice ResolvePortfolioMap()
     {
@@ -1667,7 +1674,7 @@ internal sealed partial class QuestDirector
                 var density = MapEfficiencyEstimator.EffectiveDensity(estimate);
                 if (density <= 0) continue;
                 var remaining = Math.Max(1, quest.questGoal - quest.questCurrentGoal);
-                var credit = quest.questType == QuestType.GetMaterials
+                var credit = quest.GetKind() == QuestKind.GetMaterials
                     ? MapEfficiencyEstimator.MaterialProgressPerEligibleKill(estimate.TargetsGiant)
                     : AvailableKillCreditPerEnemy(quest);
                 if (credit <= 0) continue;
@@ -1724,12 +1731,12 @@ internal sealed partial class QuestDirector
 
     private static MapEfficiency PortfolioEstimate(BaseMap map, Quest quest)
     {
-        if (quest == null) return null;
+        if (quest == null || !QuestApi.CanProgressOnMap(quest, map)) return null;
         // Critical hits progress against every enemy. They stay in the parallel execution group for Critical Sword
         // coverage and progress tracking, but must not influence the chosen route or suppress a concrete enemy target.
-        if (quest.questType is QuestType.WindDashKills or QuestType.DoCriticals) return null;
-        if (quest.questType == QuestType.GetMaterials) return MapEfficiencyEstimator.EvaluateForMaterialQuest(map);
-        if (!NeedsEnemyMap(quest.questType)) return null;
+        if (quest.GetKind() is QuestKind.WindDashKills or QuestKind.DoCriticals) return null;
+        if (quest.GetKind() == QuestKind.GetMaterials) return MapEfficiencyEstimator.EvaluateForMaterialQuest(map);
+        if (!NeedsEnemyMap(quest.GetKind())) return null;
         return MapEfficiencyEstimator.EvaluateForQuest(map, quest);
     }
 
@@ -1739,15 +1746,16 @@ internal sealed partial class QuestDirector
         {
             QuestSource.Daily => 1.25,
             QuestSource.Normal => entry.Quest?.unlocksUpgrade != null ? 1.60 : 1.45,
+            QuestSource.Event => 1.45,
             QuestSource.Weekly => 0.80,
             _ => 0.70
         };
-        var mapWeight = entry.Quest?.questType switch
+        var mapWeight = entry.Quest?.GetKind() switch
         {
-            QuestType.KillShinyEnemies => 0.10,
-            QuestType.KillEnemiesWithRageMode when IsUnrestrictedKillObjective(entry.Quest) => 0.10,
-            QuestType.KillEnemiesWithArrows when entry.Quest.enemyToKill == null && entry.Quest.enemyType == null => 0.25,
-            QuestType.KillEnemies when entry.Quest.enemyToKill == null && entry.Quest.enemyType == null => 0.50,
+            QuestKind.KillShinyEnemies => 0.10,
+            QuestKind.KillEnemiesWithRageMode when IsUnrestrictedKillObjective(entry.Quest) => 0.10,
+            QuestKind.KillEnemiesWithArrows when entry.Quest.enemyToKill == null && entry.Quest.enemyType == null => 0.25,
+            QuestKind.KillEnemies when entry.Quest.enemyToKill == null && entry.Quest.enemyType == null => 0.50,
             _ => 1.0
         };
         return basePriority * mapWeight + StrategicUnlockBonus(entry.Quest) / 100.0;
@@ -1756,18 +1764,20 @@ internal sealed partial class QuestDirector
     private static int SourcePriorityRank(QuestSource source) => source switch
     {
         QuestSource.Normal => 3,
+        QuestSource.Event => 3,
         QuestSource.Daily => 2,
         QuestSource.Weekly => 1,
         _ => 0
     };
 
-    private static bool IsMapAnchoringQuest(Quest quest) => quest != null && quest.questType != QuestType.WindDashKills &&
-        (quest.questType == QuestType.GetMaterials || NeedsEnemyMap(quest.questType) && !IsUnrestrictedKillObjective(quest));
+    private static bool IsMapAnchoringQuest(Quest quest) => quest != null && quest.GetKind() != QuestKind.WindDashKills &&
+        (quest.GetKind() == QuestKind.GetMaterials || NeedsEnemyMap(quest.GetKind()) && !IsUnrestrictedKillObjective(quest));
 
     private static bool IsUnrestrictedKillObjective(Quest quest)
     {
-        if (quest == null || !NeedsEnemyMap(quest.questType)) return false;
-        if (quest.questType is QuestType.KillFlyers or QuestType.KillGiants or QuestType.KillEnemiesOfType)
+        if (quest == null || !NeedsEnemyMap(quest.GetKind())) return false;
+        if (QuestApi.RequiredMap(quest) != null) return false;
+        if (quest.GetKind() is QuestKind.KillFlyers or QuestKind.KillGiants or QuestKind.KillEnemiesOfType)
             return false;
         try { return quest.enemyToKill == null && quest.enemyType == null; }
         catch { return false; }
@@ -1918,10 +1928,10 @@ internal sealed partial class QuestDirector
         return string.IsNullOrEmpty(name) ? CraftableCatalog.Normalize(material.localizedName) : name;
     }
 
-    private static bool NeedsEnemyMap(QuestType type) => type is
-        QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or QuestType.KillGiants or
-        QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or QuestType.KillEnemiesOfType or
-        QuestType.KillShinyEnemies or QuestType.WindDashKills;
+    private static bool NeedsEnemyMap(QuestKind type) => type is
+        QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or QuestKind.KillGiants or
+        QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or QuestKind.KillEnemiesOfType or
+        QuestKind.KillShinyEnemies or QuestKind.WindDashKills or QuestKind.KillEnemiesInLocation;
 
     internal static bool IsStandardAvailableMap(BaseMap map)
     {
@@ -1939,7 +1949,7 @@ internal sealed partial class QuestDirector
     internal static bool TargetsGiant(Quest quest)
     {
         if (quest == null) return false;
-        if (quest.questType == QuestType.KillGiants) return true;
+        if (quest.GetKind() == QuestKind.KillGiants) return true;
         if (MapEfficiencyEstimator.CurrentStage(quest.enemyToKill)?.isGiant == true) return true;
         try
         {
@@ -1953,7 +1963,7 @@ internal sealed partial class QuestDirector
     internal static bool TargetCannotBeKilledWithArrows(Quest quest)
     {
         if (quest == null || !Plugin.Config.AssumeBowAutomation.Value) return false;
-        if (quest.questType is QuestType.KillEnemiesWithRageMode or QuestType.WindDashKills) return false;
+        if (quest.GetKind() is QuestKind.KillEnemiesWithRageMode or QuestKind.WindDashKills) return false;
         var target = MapEfficiencyEstimator.CurrentStage(quest.enemyToKill);
         if (target?.cantBeKilledWithArrows != true) return false;
         if (target.isGiant && Plugin.Config.GiantRapidAttackEnabled.Value) return false;
@@ -1966,49 +1976,53 @@ internal sealed partial class QuestDirector
         var remaining = Math.Max(0d, quest.questGoal - quest.questCurrentGoal);
         if (remaining == 0) return 0;
         var travel = MapEfficiencyEstimator.EstimatedTravelSeconds(target);
-        var type = quest.questType;
+        var type = quest.GetKind();
 
-        if (type == QuestType.KillEnemiesWithRageMode)
+        if (type == QuestKind.KillEnemiesWithRageMode)
         {
             var fallbackRage = EstimateRageKillQuestSeconds(quest, density, travel);
-            return CalibratedExpectedSeconds(type, remaining, fallbackRage);
+            return QuestApi.UsesUnboostedProgress(quest) ? fallbackRage :
+                CalibratedExpectedSeconds(type, remaining, fallbackRage);
         }
 
         if (NeedsEnemyMap(type))
         {
             var fallbackKill = EstimateTimedKillQuestSeconds(quest, density, travel);
-            return SupportsRuntimeCalibration(type)
+            return !QuestApi.UsesUnboostedProgress(quest) && SupportsRuntimeCalibration(type)
                 ? CalibratedExpectedSeconds(type, remaining, fallbackKill)
                 : fallbackKill;
         }
         var fallback = type switch
         {
-            QuestType.GetMaterials => EstimateMaterialQuestSeconds(remaining, target, density, travel),
-            QuestType.UseRageMode => remaining * 10.0,
-            QuestType.PickUpCoins or QuestType.PickUpRubies or QuestType.PickUpSapphires or QuestType.PickUpEmeralds or
-                QuestType.PickUpGemstones or QuestType.PickUpDiamonds or QuestType.PickUpZyniums => Math.Max(30, Math.Ceiling(remaining / AvailableCollectableCredit(quest)) / 20.0),
-            QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox =>
+            QuestKind.GetMaterials => EstimateMaterialQuestSeconds(remaining, target, density, travel),
+            QuestKind.UseRageMode => remaining * 10.0,
+            QuestKind.PickUpCoins or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or QuestKind.PickUpEmeralds or
+                QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or QuestKind.PickUpZyniums => Math.Max(30, Math.Ceiling(remaining / AvailableCollectableCredit(quest)) / 20.0),
+            QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox =>
                 Math.Ceiling(remaining / AvailableRandomBoxCredit(quest)) * (ItemUsable(SmartItem.RandomStone) ? 79.0 / 1.4 : 79.0),
-            QuestType.HitRandomSilverBoxes or QuestType.HitRandomGoldenBoxes => 1200 + remaining * 30.0,
-            QuestType.BonusStage or QuestType.BonusStageSections => 900 + remaining * 30.0,
-            QuestType.ChestHuntChests => source == QuestSource.Weekly ? 1800 + remaining * 5.0 : 600 + remaining * 5.0,
-            QuestType.Boost => EstimateBoostQuestSeconds(remaining),
-            QuestType.CraftTemporaryItems => StrategyBehaviour.CanCompleteCraftQuestWithDragonEggs(remaining)
+            QuestKind.HitRandomSilverBoxes or QuestKind.HitRandomGoldenBoxes => 1200 + remaining * 30.0,
+            QuestKind.BonusStage or QuestKind.BonusStageSections => 900 + remaining * 30.0,
+            QuestKind.ChestHuntChests => source == QuestSource.Weekly ? 1800 + remaining * 5.0 : 600 + remaining * 5.0,
+            QuestKind.Boost => EstimateBoostQuestSeconds(remaining),
+            QuestKind.CraftTemporaryItems => StrategyBehaviour.CanCompleteCraftQuestWithDragonEggs(remaining)
                 ? Math.Max(1, remaining * 0.5)
                 : 600 + remaining * 15.0,
-            QuestType.DoCriticals => Math.Max(60, remaining / 10.0),
-            QuestType.GoThroughPortals => EstimatePortalQuestSeconds(remaining),
-            QuestType.CompleteDailyQuests => 60,
-            QuestType.FindArmoryItems or QuestType.DigDigPiles or QuestType.CompleteAscendingHeights or
-                QuestType.CompleteGrappleRuns => 1800 + remaining * 300.0,
+            QuestKind.DoCriticals => Math.Max(60, remaining / 10.0),
+            QuestKind.GoThroughPortals => EstimatePortalQuestSeconds(remaining),
+            QuestKind.VisitLocation => travel + EstimatePortalQuestSeconds(
+                Math.Max(1, remaining * 2 - (MapEfficiencyEstimator.SameMap(target,
+                    MapController.instance?.selectedMap) ? 0 : 1))),
+            QuestKind.CompleteDailyQuests => 60,
+            QuestKind.FindArmoryItems or QuestKind.DigDigPiles or QuestKind.CompleteAscendingHeights or
+                QuestKind.CompleteGrappleRuns => 1800 + remaining * 300.0,
             _ => source == QuestSource.Weekly ? 1200 : 300
         };
-        return SupportsRuntimeCalibration(type)
+        return !QuestApi.UsesUnboostedProgress(quest) && SupportsRuntimeCalibration(type)
             ? CalibratedExpectedSeconds(type, remaining, fallback)
             : fallback;
     }
 
-    private double CalibratedExpectedSeconds(QuestType type, double remaining, double fallback)
+    private double CalibratedExpectedSeconds(QuestKind type, double remaining, double fallback)
     {
         if (!Plugin.Config.QuestRuntimeCalibrationEnabled.Value ||
             !_runtimeCalibrations.TryGetValue(type, out var calibration) ||
@@ -2020,16 +2034,16 @@ internal sealed partial class QuestDirector
         return Math.Clamp(empirical, Math.Max(1, fallback * 0.25), Math.Max(1, fallback * 4));
     }
 
-    private static bool SupportsRuntimeCalibration(QuestType type) => type is
-        QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or QuestType.KillGiants or
-        QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or QuestType.KillEnemiesOfType or
-        QuestType.KillShinyEnemies or QuestType.GetMaterials or QuestType.UseRageMode or
-        QuestType.PickUpCoins or QuestType.PickUpRubies or QuestType.PickUpSapphires or
-        QuestType.PickUpEmeralds or QuestType.PickUpGemstones or QuestType.PickUpDiamonds or QuestType.PickUpZyniums or
-        QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox or QuestType.HitRandomSilverBoxes or
-        QuestType.HitRandomGoldenBoxes or QuestType.BonusStage or QuestType.BonusStageSections or
-        QuestType.ChestHuntChests or QuestType.Boost or QuestType.CraftTemporaryItems or QuestType.DoCriticals or
-        QuestType.GoThroughPortals;
+    private static bool SupportsRuntimeCalibration(QuestKind type) => type is
+        QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or QuestKind.KillGiants or
+        QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or QuestKind.KillEnemiesOfType or
+        QuestKind.KillShinyEnemies or QuestKind.KillEnemiesInLocation or QuestKind.GetMaterials or QuestKind.UseRageMode or
+        QuestKind.PickUpCoins or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or
+        QuestKind.PickUpEmeralds or QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or QuestKind.PickUpZyniums or
+        QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox or QuestKind.HitRandomSilverBoxes or
+        QuestKind.HitRandomGoldenBoxes or QuestKind.BonusStage or QuestKind.BonusStageSections or
+        QuestKind.ChestHuntChests or QuestKind.Boost or QuestKind.CraftTemporaryItems or QuestKind.DoCriticals or
+        QuestKind.GoThroughPortals;
 
     private double EstimateRageKillQuestSeconds(Quest quest, double density, double travel)
     {
@@ -2042,7 +2056,8 @@ internal sealed partial class QuestDirector
         catch { /* Keep base quest credit during scene races. */ }
 
         var bonuses = new List<RageQuestTimedBonus>();
-        if (!IsCollabQuest(quest))
+        if (QuestApi.UsesUnboostedProgress(quest)) baseCredit = 1;
+        else
         {
             foreach (var (kind, bonus) in CraftableEffectModel.KillStaffsDescending())
                 AddRageStaffForecast(kind, bonus, travel, ref baseCredit, bonuses);
@@ -2098,7 +2113,7 @@ internal sealed partial class QuestDirector
         var live = 1;
         try { live = Math.Max(1, PlayerInventory.instance?.questProgressPerKill ?? 1); }
         catch { /* Game initialization races use the base value. */ }
-        if (IsCollabQuest(quest)) return 1;
+        if (QuestApi.UsesUnboostedProgress(quest)) return 1;
 
         var remaining = quest == null ? double.PositiveInfinity :
             Math.Max(0, quest.questGoal - quest.questCurrentGoal);
@@ -2120,7 +2135,7 @@ internal sealed partial class QuestDirector
         var remaining = Math.Max(0d, quest.questGoal - quest.questCurrentGoal);
         var killsPerMinute = MapEfficiencyEstimator.EstimatedTargetKillsPerMinute(density,
             TargetsGiant(quest));
-        if (IsCollabQuest(quest))
+        if (QuestApi.UsesUnboostedProgress(quest))
             return travel + Math.Ceiling(remaining) / killsPerMinute * 60;
 
         var baseCredit = 1.0;
@@ -2192,7 +2207,7 @@ internal sealed partial class QuestDirector
         try { live = Math.Max(1, PlayerInventory.instance?.collectablesQuestsProgress ?? 1); }
         catch { /* Use base value. */ }
         var potential = !ItemActive(SmartItem.NecklaceOfCollectables) && ItemUsable(SmartItem.NecklaceOfCollectables) ? 8 : 0;
-        return StrategyMath.ForecastQuestCredit(live, potential, IsCollabQuest(quest));
+        return StrategyMath.ForecastQuestCredit(live, potential, QuestApi.UsesUnboostedProgress(quest));
     }
 
     private double AvailableRandomBoxCredit(Quest quest)
@@ -2201,7 +2216,7 @@ internal sealed partial class QuestDirector
         try { live = Math.Max(1, PlayerInventory.instance?.randomBoxQuestsProgress ?? 1); }
         catch { /* Use base value. */ }
         var potential = !ItemActive(SmartItem.RandomBoxStaff) && ItemUsable(SmartItem.RandomBoxStaff) ? 5 : 0;
-        return StrategyMath.ForecastQuestCredit(live, potential, IsCollabQuest(quest));
+        return StrategyMath.ForecastQuestCredit(live, potential, QuestApi.UsesUnboostedProgress(quest));
     }
 
     private static double EstimateMaterialQuestSeconds(double remaining, BaseMap target, double density, double travel)
@@ -2242,7 +2257,7 @@ internal sealed partial class QuestDirector
         catch { return false; }
     }
 
-    private bool IsCurrentWeeklyTarget(QuestType type) => type == _weeklyPreferredTarget;
+    private bool IsCurrentWeeklyTarget(QuestKind type) => type == _weeklyPreferredTarget;
 
     private void InitializeWeeklyTargetStage()
     {
@@ -2250,34 +2265,34 @@ internal sealed partial class QuestDirector
         _weeklyTargetStageInitialized = true;
         var active = _snapshot.Where(x => x.Source == QuestSource.Weekly && x.Quest != null &&
                                           !x.Quest.isClaimed).ToArray();
-        var daily = active.FirstOrDefault(x => x.Quest.questType == QuestType.CompleteDailyQuests);
-        var portal = active.FirstOrDefault(x => x.Quest.questType == QuestType.GoThroughPortals);
+        var daily = active.FirstOrDefault(x => x.Quest.GetKind() == QuestKind.CompleteDailyQuests);
+        var portal = active.FirstOrDefault(x => x.Quest.GetKind() == QuestKind.GoThroughPortals);
         // On a mid-set start, finish a Portal quest that already has progress or is the only quest left. Otherwise treat
         // the set as new and seek Complete Daily Quests first.
         var resumePortal = portal?.Quest != null &&
                            (portal.Quest.questCurrentGoal > 0 || active.Length == 1 && daily == null);
-        SetWeeklyPreferredTarget(resumePortal ? QuestType.GoThroughPortals : QuestType.CompleteDailyQuests,
+        SetWeeklyPreferredTarget(resumePortal ? QuestKind.GoThroughPortals : QuestKind.CompleteDailyQuests,
             resumePortal
                 ? "Detected an in-progress Portal Weekly; continue finishing this set"
                 : "Start the current Weekly set from Complete Daily Quests");
     }
 
-    private void AdvanceWeeklyTargetAfterClaim(QuestType claimedType)
+    private void AdvanceWeeklyTargetAfterClaim(QuestKind claimedType)
     {
         if (!Plugin.Config.WeeklyPreferredPairStrategy.Value) return;
-        if (claimedType == QuestType.CompleteDailyQuests)
+        if (claimedType == QuestKind.CompleteDailyQuests)
         {
-            SetWeeklyPreferredTarget(QuestType.GoThroughPortals,
+            SetWeeklyPreferredTarget(QuestKind.GoThroughPortals,
                 "Complete Daily Quests was claimed; same-set types cannot repeat, so switch to Go Through Portals");
         }
-        else if (claimedType == QuestType.GoThroughPortals)
+        else if (claimedType == QuestKind.GoThroughPortals)
         {
-            SetWeeklyPreferredTarget(QuestType.CompleteDailyQuests,
+            SetWeeklyPreferredTarget(QuestKind.CompleteDailyQuests,
                 "Go Through Portals was claimed; this set is complete and the next starts from Complete Daily Quests");
         }
     }
 
-    private void SetWeeklyPreferredTarget(QuestType target, string reason)
+    private void SetWeeklyPreferredTarget(QuestKind target, string reason)
     {
         _weeklyTargetStageInitialized = true;
         _weeklyPreferredTarget = target;
@@ -2285,24 +2300,24 @@ internal sealed partial class QuestDirector
         SmartLog.Info(SmartLogCategory.Quest, $"Weekly phase target changed to {target}.");
     }
 
-    private bool ShouldForceReroll(QuestType type, QuestSource source)
+    private bool ShouldForceReroll(QuestKind type, QuestSource source)
     {
         if (source == QuestSource.Weekly)
-            return type is QuestType.GoThroughPortals or QuestType.ChestHuntChests or QuestType.BonusStage or
-                QuestType.BonusStageSections or QuestType.CompleteAscendingHeights or QuestType.CompleteGrappleRuns or
-                QuestType.UseRageMode;
-        var cannotActivelyAutomate = type is QuestType.WindDashKills or QuestType.FindArmoryItems or
-            QuestType.DigDigPiles or QuestType.CompleteAscendingHeights or QuestType.CompleteGrappleRuns;
+            return type is QuestKind.GoThroughPortals or QuestKind.ChestHuntChests or QuestKind.BonusStage or
+                QuestKind.BonusStageSections or QuestKind.CompleteAscendingHeights or QuestKind.CompleteGrappleRuns or
+                QuestKind.UseRageMode;
+        var cannotActivelyAutomate = type is QuestKind.WindDashKills or QuestKind.FindArmoryItems or
+            QuestKind.DigDigPiles or QuestKind.CompleteAscendingHeights or QuestKind.CompleteGrappleRuns;
         // Use-Rage quests mostly wait for a long cooldown and compete with Rage kills and Souls events for pill materials.
         // Strategy always prefers quests that parallel specified kills, so global slow history cannot protect this type.
-        if (type == QuestType.UseRageMode) return true;
+        if (type == QuestKind.UseRageMode) return true;
         if (HasAdaptiveDailyRerollThreshold) return cannotActivelyAutomate;
         var coldStartHighOpportunityCost = type is
-            QuestType.Boost or QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox or
-            QuestType.HitRandomSilverBoxes or QuestType.HitRandomGoldenBoxes or QuestType.ChestHuntChests or
-            QuestType.BonusStage or QuestType.BonusStageSections or QuestType.CompleteAscendingHeights or
-            QuestType.CompleteGrappleRuns or QuestType.FindArmoryItems or QuestType.DigDigPiles or
-            QuestType.UseRageMode or QuestType.WindDashKills;
+            QuestKind.Boost or QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox or
+            QuestKind.HitRandomSilverBoxes or QuestKind.HitRandomGoldenBoxes or QuestKind.ChestHuntChests or
+            QuestKind.BonusStage or QuestKind.BonusStageSections or QuestKind.CompleteAscendingHeights or
+            QuestKind.CompleteGrappleRuns or QuestKind.FindArmoryItems or QuestKind.DigDigPiles or
+            QuestKind.UseRageMode or QuestKind.WindDashKills;
         return cannotActivelyAutomate || coldStartHighOpportunityCost;
     }
 
@@ -2346,7 +2361,7 @@ internal sealed partial class QuestDirector
 
     private bool IsStalledDailyEventQuest(Quest quest)
     {
-        if (quest == null || !IsStallSensitiveDailyType(quest.questType)) return false;
+        if (quest == null || !IsStallSensitiveDailyType(quest.GetKind())) return false;
         try
         {
             if (!_progressObservations.TryGetValue(quest.GetInstanceID(), out var observation)) return false;
@@ -2356,20 +2371,20 @@ internal sealed partial class QuestDirector
         catch { return false; }
     }
 
-    private static bool IsStallSensitiveDailyType(QuestType type) => type is
-        QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or QuestType.HitRandomGoldenBoxes or
-        QuestType.GetCoinsFromRandomBox or QuestType.BonusStage or QuestType.BonusStageSections or
-        QuestType.ChestHuntChests or QuestType.CompleteAscendingHeights or QuestType.CompleteGrappleRuns or
-        QuestType.FindArmoryItems or QuestType.DigDigPiles or QuestType.Boost or QuestType.GetMaterials;
+    private static bool IsStallSensitiveDailyType(QuestKind type) => type is
+        QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or QuestKind.HitRandomGoldenBoxes or
+        QuestKind.GetCoinsFromRandomBox or QuestKind.BonusStage or QuestKind.BonusStageSections or
+        QuestKind.ChestHuntChests or QuestKind.CompleteAscendingHeights or QuestKind.CompleteGrappleRuns or
+        QuestKind.FindArmoryItems or QuestKind.DigDigPiles or QuestKind.Boost or QuestKind.GetMaterials;
 
-    private static bool IsPassiveCollectableDailyType(QuestType type) => type is
-        QuestType.PickUpCoins or QuestType.PickUpGemstones or QuestType.PickUpDiamonds or
-        QuestType.PickUpEmeralds or QuestType.PickUpRubies or QuestType.PickUpSapphires or
-        QuestType.PickUpZyniums;
+    private static bool IsPassiveCollectableDailyType(QuestKind type) => type is
+        QuestKind.PickUpCoins or QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or
+        QuestKind.PickUpEmeralds or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or
+        QuestKind.PickUpZyniums;
 
     private static bool CurrentNonStandardMapContainsTarget(Quest quest)
     {
-        if (quest == null || !NeedsEnemyMap(quest.questType)) return false;
+        if (quest == null || !NeedsEnemyMap(quest.GetKind())) return false;
         try
         {
             var current = MapController.instance?.selectedMap;
@@ -2384,8 +2399,8 @@ internal sealed partial class QuestDirector
     {
         // Rage kills are map-reachable but consume pills, three staffs, and cross-map supply time. They cannot share the
         // unconditional keep policy of ordinary specified kills; low-progress Dailies use the high-opportunity-cost rule.
-        if (quest == null || quest.questType is QuestType.WindDashKills or QuestType.KillEnemiesWithRageMode ||
-            !NeedsEnemyMap(quest.questType) ||
+        if (quest == null || quest.GetKind() is QuestKind.WindDashKills or QuestKind.KillEnemiesWithRageMode ||
+            !NeedsEnemyMap(quest.GetKind()) ||
             target == null || density <= 0) return false;
         try { return !TargetCannotBeKilledWithArrows(quest); }
         catch { return false; }

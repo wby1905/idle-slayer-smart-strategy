@@ -11,6 +11,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     private readonly CraftableCatalog _catalog = new();
     private MaterialPlanner _materials;
     private QuestDirector _quests;
+    private float _questRetryAt;
     private readonly Dictionary<SmartItem, float> _craftBackoffUntil = new();
     private readonly Dictionary<SmartItem, float> _nextCraftSkipLogAt = new();
     private float _nextTick;
@@ -141,7 +142,11 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             return;
         }
 
-        if (!PaidSoulsBurstOwnsControl) _quests?.TickActiveTime();
+        if (!PaidSoulsBurstOwnsControl && Time.unscaledTime >= _questRetryAt)
+        {
+            try { _quests?.TickActiveTime(); }
+            catch (Exception ex) { SuspendQuestAutomation(ex); }
+        }
 
         try { HandleGiantRapidAttack(); }
         catch (Exception ex)
@@ -327,6 +332,9 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     {
         TrackMapChange();
         var stable = IsRunnerStable();
+        // Village/UI/pause transitions break observation continuity. Existing jobs still count as
+        // supply, but require no automatic premium charge after the user could have replaced them.
+        if (!stable) _supplementalRefining.ReleaseOwnership();
         EnsurePermanentClientBonuses(stable);
         EnsureEndgamePermanentPaidBonuses(stable);
         var soulEvent = ReadSoulsEvent();
@@ -374,6 +382,8 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
         if (PrepareQuestPlan()) return;
 
+        HandleRefineryAutomation(soulEvent);
+
         if (HandleRequiredCharacterTask()) return;
 
         if (TryRelieveBlockedMaterialQuestCapacity()) return;
@@ -381,6 +391,8 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         if (TryOpenDragonEggForCraftQuest(_quests?.FindActiveCraftTemporaryItemsQuest())) return;
 
         ApplyParallelQuestBoosters();
+
+        if (HandleSupplementalCraftables(soulEvent)) return;
 
         // Map-agnostic Random Box quests progress naturally during material farming, so their booster may run in parallel
         // rather than being blocked by material priority. Handle only same-map box boosters; TryCraft still owns reserves.
@@ -498,13 +510,14 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         // supply from current progress, preventing oversupply after incidental progress without restoring a full pattern
         // scan every five seconds.
             var deepReplanDue = (previousNeed == null || previousNeed.Opportunistic ||
-                                 previousNeed.QuestPlanId != 0) &&
+                                 previousNeed.QuestPlanId != 0 || previousNeed.ForRefinery) &&
                                 Time.unscaledTime >= _nextMaterialDeepReplan;
             if (_materialPlanDirty || completedOrInvalid || deepReplanDue)
             {
                 var nextNeed = _materials.FindMostImportantNeed(previousNeed, _questPlan,
                     PortalQuestProtectionActive(), ParallelRageSupplyPlan(),
                     _quests?.HasActiveDailyTasks == true);
+                nextNeed = IncludeRefinerySupply(nextNeed);
                 _materialNeed = ShouldKeepDedicatedQuestSupply(previousNeed, nextNeed) ||
                                 TryKeepMaterialNeedForBoosterLinger(previousNeed, nextNeed)
                     ? previousNeed
@@ -622,10 +635,10 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         secondsLeft = 0;
         if (need == null || need.Opportunistic || need.QuestPlanId == 0 || plan?.Quest == null ||
             need.QuestPlanId != plan.InstanceId || plan.Current >= plan.Goal || !IsKillQuest(plan.Type) ||
-            plan.IsCollab) return false;
+            plan.UsesUnboostedProgress) return false;
 
         // Rage kills use staffs only inside a Rage window; cooldown may still prepare pill and future staff materials.
-        if (plan.Type == QuestType.KillEnemiesWithRageMode &&
+        if (plan.Type == QuestKind.KillEnemiesWithRageMode &&
             RageModeManager.instance?.currentState == RageModeManager.RageModeStates.NotActive) return false;
 
         secondsLeft = Math.Max(EffectSeconds(SmartItem.DeathwaveScepter),
@@ -649,6 +662,11 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     private bool MaterialNeedRequiresReplan(MaterialNeed need)
     {
         if (need == null) return false;
+        if (need.ForRefinery && !_supplementalRefining.StillNeedsRaw(need.Material))
+        {
+            _materialPlanEndReason = "Refinery demand is covered, paused or no longer needed";
+            return true;
+        }
         if (_quests?.HasActiveDailyTasks == true && need.QuestPlanId == 0 &&
             need.Purpose?.Contains("Idle surplus material supply", StringComparison.Ordinal) == true)
         {
@@ -836,7 +854,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             ClearMaterialLinger();
             return false;
         }
-        if (previous?.Material == null || previous.Opportunistic || !Plugin.Config.MaterialBoosterLingerEnabled.Value)
+        if (previous?.Material == null || previous.ForRefinery || previous.Opportunistic || !Plugin.Config.MaterialBoosterLingerEnabled.Value)
         {
             ClearMaterialLinger();
             return false;
@@ -958,6 +976,32 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     private bool PrepareQuestPlan()
     {
+        if (Time.unscaledTime < _questRetryAt) return false;
+        try { return PrepareQuestPlanCore(); }
+        catch (Exception ex)
+        {
+            SuspendQuestAutomation(ex);
+            return false;
+        }
+    }
+
+    private void SuspendQuestAutomation(Exception ex)
+    {
+        _questRetryAt = Time.unscaledTime + RuntimeCadence.QuestCompatibilityRetrySeconds;
+        _questPlan = null;
+        _parallelQuestPlans = Array.Empty<QuestPlan>();
+        _lastParallelQuestKey = null;
+        _parallelAppliedPlanIds.Clear();
+        _quests?.SuspendAfterFailure(_questRetryAt);
+        if (_materialNeed != null && _materialNeed.QuestPlanId != 0) _materialNeed = null;
+        InvalidateMaterialPlan();
+        SmartLog.Warning(SmartLogCategory.Compatibility,
+            $"Quest automation suspended for {RuntimeCadence.QuestCompatibilityRetrySeconds:0}s; " +
+            $"combat and independent material routes remain available: {ex}");
+    }
+
+    private bool PrepareQuestPlanCore()
+    {
         if (!Plugin.Config.QuestAutomationEnabled.Value)
         {
             _questPlan = null;
@@ -1021,11 +1065,11 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         // representative quest per global temporary effect so execution cost stays bounded as quest count grows.
             if (rage == null && RequiresActiveRageControl(plan)) rage = plan;
             if (giant == null && plan.TargetsGiants) giant = plan;
-            if (material == null && plan.Type == QuestType.GetMaterials) material = plan;
-            if (critical == null && plan.Type == QuestType.DoCriticals) critical = plan;
+            if (material == null && plan.Type == QuestKind.GetMaterials) material = plan;
+            if (critical == null && plan.Type == QuestKind.DoCriticals) critical = plan;
             if (collectable == null && IsCollectableQuest(plan.Type)) collectable = plan;
-            if (craft == null && plan.Type == QuestType.CraftTemporaryItems) craft = plan;
-            if (randomStone == null && plan.Type is QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox)
+            if (craft == null && plan.Type == QuestKind.CraftTemporaryItems) craft = plan;
+            if (randomStone == null && plan.Type is QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox)
                 randomStone = plan;
         }
 
@@ -1055,7 +1099,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     }
 
     private static bool RequiresActiveRageControl(QuestPlan plan) => plan?.Quest != null &&
-        (plan.Type is QuestType.KillEnemiesWithRageMode or QuestType.UseRageMode ||
+        (plan.Type is QuestKind.KillEnemiesWithRageMode or QuestKind.UseRageMode ||
          plan.RequiresRageForBowAutomation);
 
     private void LogParallelQuestGroup()
@@ -1077,7 +1121,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     {
         if (_parallelQuestPlans == null) return null;
         return _parallelQuestPlans.FirstOrDefault(plan => plan?.Quest != null &&
-            plan.Type == QuestType.KillEnemiesWithRageMode && plan.Current < plan.Goal);
+            plan.Type == QuestKind.KillEnemiesWithRageMode && plan.Current < plan.Goal);
     }
 
     private QuestPlan FindExecutionPlan(int instanceId)
@@ -1097,8 +1141,24 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             return;
         }
 
+        if (!QuestApi.CanProgressNow(_questPlan.Quest))
+        {
+            _quests.ReleasePlan("Quest completed or its native event/set eligibility changed");
+            _questPlan = null;
+            return;
+        }
+
         var target = _questPlan.TargetMap;
-        if (_questPlan.Type == QuestType.GoThroughPortals)
+        if (_questPlan.Type == QuestKind.VisitLocation)
+        {
+            // MapVisited counts an arrival, not time spent in the map. An objective that became
+            // available while already here needs one ordinary trip out and back to its fixed map.
+            var destination = SameMap(target, MapController.instance?.selectedMap)
+                ? FindAlternativeQuestMap() : target;
+            TryOpenQuestPortal(destination, $"Visit location for {_questPlan.Name}");
+            return;
+        }
+        if (_questPlan.Type == QuestKind.GoThroughPortals)
         {
             ExtendPortalQuestProtection("Preparing to open a Weekly Portal");
             if (TryOpenQuestPortal(FindAlternativeQuestMap(), "Weekly Go Through Portals",
@@ -1143,6 +1203,8 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     private void ApplyQuestBoosters(QuestPlan plan, bool parallel = false)
     {
+        if (plan?.Quest == null || !QuestApi.CanProgressNow(plan.Quest) ||
+            !QuestApi.CanProgressOnMap(plan.Quest, MapController.instance?.selectedMap)) return;
         if (PortalQuestProtectionActive())
         {
             LogPortalQuestProtection("Pause temporary booster crafting for the current quest");
@@ -1152,9 +1214,9 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         var reserve = Math.Max(0, Plugin.Config.QuestBoosterReserveUses.Value);
         var reason = $"{(parallel ? "Parallel quest" : "Quest")} {plan.Name}";
         var naturalOnlyDailyRage = plan.Source == QuestSource.Daily &&
-                                   plan.Type == QuestType.KillEnemiesWithRageMode;
+                                   plan.Type == QuestKind.KillEnemiesWithRageMode;
 
-        if (plan.Type == QuestType.KillEnemiesWithRageMode)
+        if (plan.Type == QuestKind.KillEnemiesWithRageMode)
         {
         // Staff duration advances in real time, so start the Rage window first or staffs expire while waiting for natural
         // cooldown or pill materials.
@@ -1170,14 +1232,15 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             if (RageModeManager.instance?.currentState == RageModeManager.RageModeStates.NotActive) return;
         }
 
-        if (IsKillQuest(plan.Type) && !(plan.Type == QuestType.WindDashKills && !WindDashAutomationAvailable()))
+        if (IsKillQuest(plan.Type) && !(plan.Type == QuestKind.WindDashKills && !WindDashAutomationAvailable()))
         {
             // Giant spawn frequency is the primary bottleneck, including a specified Giant; do not check only KillGiants.
             if (plan.TargetsGiants && NeedsCoverage(SmartItem.ShardsNecklace, seconds) &&
                 TryCraft(SmartItem.ShardsNecklace, Plugin.Config.ShardsNecklaceReserveUses.Value,
                     $"Quest {plan.Name}: increase target Giant spawn rate")) return;
-            // Collaboration event quests ignore direct quest multipliers. Necklace may improve Giant spawn rate, but staffs are not wasted.
-            if (!plan.IsCollab && !naturalOnlyDailyRage)
+            // Native plain-progress quests ignore direct credit multipliers. Spawn-rate effects
+            // still help, while staffs must not trigger crafting or dedicated material supply.
+            if (!plan.UsesUnboostedProgress && !naturalOnlyDailyRage)
             {
                 // Staffs overlap, but apply lower-cost marginal gains first and add tiers from remaining real kills.
                 // Deathwave Scepter no longer consumes scarce Simurgh Feathers merely because its multiplier is largest.
@@ -1187,31 +1250,31 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             }
         }
 
-        if (!plan.IsCollab && IsCollectableQuest(plan.Type) && QuestDirector.CanProgressCollectableQuest(plan.Type) &&
+        if (!plan.UsesUnboostedProgress && IsCollectableQuest(plan.Type) && QuestDirector.CanProgressCollectableQuest(plan.Type) &&
             NeedsCoverage(SmartItem.NecklaceOfCollectables, seconds) &&
             TryCraft(SmartItem.NecklaceOfCollectables, reserve, reason)) return;
 
         if (IsRandomBoxQuest(plan.Type))
             if (TryApplyRandomBoxQuestBoosters(plan)) return;
 
-        if (plan.Type is QuestType.BonusStage or QuestType.BonusStageSections)
+        if (plan.Type is QuestKind.BonusStage or QuestKind.BonusStageSections)
         {
             if (NeedsActivation(SmartItem.Specialization) && TryCraft(SmartItem.Specialization, reserve, reason)) return;
             if (NeedsCoverage(SmartItem.RandomStone, seconds) && TryCraft(SmartItem.RandomStone, reserve, reason)) return;
         }
 
-        if (plan.Type == QuestType.ChestHuntChests && NeedsActivation(SmartItem.KeyManifest) &&
+        if (plan.Type == QuestKind.ChestHuntChests && NeedsActivation(SmartItem.KeyManifest) &&
             TryCraft(SmartItem.KeyManifest, reserve, reason)) return;
 
-        if (plan.Type == QuestType.DoCriticals && NeedsCoverage(SmartItem.CriticalSword, seconds) &&
+        if (plan.Type == QuestKind.DoCriticals && NeedsCoverage(SmartItem.CriticalSword, seconds) &&
             TryCraft(SmartItem.CriticalSword, Plugin.Config.CriticalSwordReserveUses.Value, reason)) return;
 
-        if (plan.Type == QuestType.GetMaterials && MapEfficiencyEstimator.ExpectedMaterialKills(
+        if (plan.Type == QuestKind.GetMaterials && MapEfficiencyEstimator.ExpectedMaterialKills(
                 Math.Max(0, plan.Goal - plan.Current), false) >=
             Math.Max(1, Plugin.Config.WhetstoneMinimumExpectedEligibleKills.Value) && Plugin.Config.WhetstoneDuringMaterialRecovery.Value &&
             NeedsCoverage(SmartItem.Whetstone, seconds) && TryCraft(SmartItem.Whetstone, Plugin.Config.WhetstoneReserveUses.Value, reason)) return;
 
-        if (plan.Type == QuestType.CraftTemporaryItems)
+        if (plan.Type == QuestKind.CraftTemporaryItems)
         {
         // Keep the useful-item fallback only when regular Dragon Eggs are insufficient or below reserve. The normal path
         // opens exactly the remaining quest count before material scheduling.
@@ -1219,7 +1282,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             if (NeedsCoverage(SmartItem.Whetstone, seconds) && TryCraft(SmartItem.Whetstone, Plugin.Config.WhetstoneReserveUses.Value, reason)) return;
         }
 
-        if (plan.Type == QuestType.UseRageMode || plan.RequiresRageForBowAutomation)
+        if (plan.Type == QuestKind.UseRageMode || plan.RequiresRageForBowAutomation)
             HandleQuestRage(plan);
     }
 
@@ -1239,7 +1302,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     private bool TryOpenDragonEggForCraftQuest(Quest quest)
     {
-        if (quest == null || quest.questType != QuestType.CraftTemporaryItems ||
+        if (quest == null || quest.GetKind() != QuestKind.CraftTemporaryItems ||
             quest.questCurrentGoal >= quest.questGoal ||
             !Plugin.Config.CraftQuestUseDragonEggs.Value) return false;
         var now = Time.unscaledTime;
@@ -1331,7 +1394,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         var reserve = Math.Max(0, Plugin.Config.QuestBoosterReserveUses.Value);
             // HandleLiveRandomBoxStaff processes Random Box Staff after one live-box scan. Do not enumerate the Unity
             // scene again for every parallel box quest; Random Stone still raises only ordinary box frequency.
-        return plan.Type is QuestType.HitRandomBoxes or QuestType.GetCoinsFromRandomBox && actionsBefore >= 2 &&
+        return plan.Type is QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox && actionsBefore >= 2 &&
                NeedsCoverage(SmartItem.RandomStone, targetSeconds) &&
                TryCraft(SmartItem.RandomStone, reserve,
                    $"Quest {plan.Name}: increase ordinary Random Box frequency; active in parallel on material routes");
@@ -1366,7 +1429,8 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     private static bool UsefulRandomBoxStaffPlan(QuestPlan plan)
     {
-        if (plan?.Quest == null || !RandomBoxStaffSupports(plan.Type) || plan.Current >= plan.Goal || plan.IsCollab)
+        if (plan?.Quest == null || !RandomBoxStaffSupports(plan.Type) || plan.Current >= plan.Goal ||
+            plan.UsesUnboostedProgress || !QuestApi.CanProgressNow(plan.Quest))
             return false;
         var remaining = Math.Max(0, plan.Goal - plan.Current);
         var liveCredit = ActiveRandomBoxCredit(plan);
@@ -1387,9 +1451,9 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
             if (!UsefulRandomBoxStaffPlan(candidate)) return;
             var rank = candidate.Type switch
             {
-                QuestType.HitRandomSilverBoxes when silver => 2,
-                QuestType.HitRandomGoldenBoxes when gold => 2,
-                QuestType.HitRandomBoxes => 1,
+                QuestKind.HitRandomSilverBoxes when silver => 2,
+                QuestKind.HitRandomGoldenBoxes when gold => 2,
+                QuestKind.HitRandomBoxes => 1,
                 _ => -1
             };
             if (rank > bestRank)
@@ -1442,7 +1506,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
                     $"Activated Rage for a quest window; questInstanceId={plan.InstanceId}.");
                 return true;
             }
-            if (plan.Source == QuestSource.Daily && plan.Type == QuestType.KillEnemiesWithRageMode)
+            if (plan.Source == QuestSource.Daily && plan.Type == QuestKind.KillEnemiesWithRageMode)
                 return false; // Dailies use natural cooldown only and never spend pills or start dedicated supply.
             if (Plugin.Config.QuestRagePillEnabled.Value && _ragePillsThisQuest < cap &&
                 TryCraft(SmartItem.RagePill, Plugin.Config.RagePillReserveUses.Value,
@@ -1487,12 +1551,12 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         _nextCharacterSwitchCheckAt = now + 1f;
 
         var candidates = new List<QuestPlan>();
-        if (_questPlan?.Quest != null && _questPlan.Type == QuestType.KillEnemiesWithCharacter &&
+        if (_questPlan?.Quest != null && _questPlan.Type == QuestKind.KillEnemiesWithCharacter &&
             _questPlan.Current < _questPlan.Goal)
             candidates.Add(_questPlan);
         if (_parallelQuestPlans != null)
             candidates.AddRange(_parallelQuestPlans.Where(plan => plan?.Quest != null &&
-                plan.Type == QuestType.KillEnemiesWithCharacter && plan.Current < plan.Goal &&
+                plan.Type == QuestKind.KillEnemiesWithCharacter && plan.Current < plan.Goal &&
                 candidates.All(existing => existing.InstanceId != plan.InstanceId)));
         if (candidates.Count == 0)
         {
@@ -1575,7 +1639,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
 
     private static double ActiveRandomBoxCredit(QuestPlan plan)
     {
-        if (plan?.IsCollab == true) return 1;
+        if (plan?.UsesUnboostedProgress == true) return 1;
         try { return Math.Max(1, PlayerInventory.instance?.randomBoxQuestsProgress ?? 1); }
         catch { return 1; }
     }
@@ -1707,20 +1771,20 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
         catch { return NeedsCoverage(kind, 1); }
     }
 
-    private static bool IsKillQuest(QuestType type) => type is
-        QuestType.KillEnemies or QuestType.KillEnemiesWithArrows or QuestType.KillFlyers or QuestType.KillGiants or
-        QuestType.KillEnemiesWithRageMode or QuestType.KillEnemiesWithCharacter or QuestType.KillEnemiesOfType or
-        QuestType.KillShinyEnemies or QuestType.WindDashKills;
+    private static bool IsKillQuest(QuestKind type) => type is
+        QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or QuestKind.KillGiants or
+        QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or QuestKind.KillEnemiesOfType or
+        QuestKind.KillShinyEnemies or QuestKind.WindDashKills or QuestKind.KillEnemiesInLocation;
 
-    private static bool IsCollectableQuest(QuestType type) => type is
-        QuestType.PickUpCoins or QuestType.PickUpRubies or QuestType.PickUpSapphires or QuestType.PickUpEmeralds or
-        QuestType.PickUpGemstones or QuestType.PickUpDiamonds or QuestType.PickUpZyniums;
+    private static bool IsCollectableQuest(QuestKind type) => type is
+        QuestKind.PickUpCoins or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or QuestKind.PickUpEmeralds or
+        QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or QuestKind.PickUpZyniums;
 
-    private static bool IsRandomBoxQuest(QuestType type) => type is
-        QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or QuestType.HitRandomGoldenBoxes or QuestType.GetCoinsFromRandomBox;
+    private static bool IsRandomBoxQuest(QuestKind type) => type is
+        QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or QuestKind.HitRandomGoldenBoxes or QuestKind.GetCoinsFromRandomBox;
 
-    private static bool RandomBoxStaffSupports(QuestType type) => type is
-        QuestType.HitRandomBoxes or QuestType.HitRandomSilverBoxes or QuestType.HitRandomGoldenBoxes;
+    private static bool RandomBoxStaffSupports(QuestKind type) => type is
+        QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or QuestKind.HitRandomGoldenBoxes;
 
     private bool TryCraft(SmartItem kind, int reserveUses, string reason, bool ignoreGlobalInterval = false,
         bool allowReserveBorrow = false, bool ignoreMaterialReserve = false)
@@ -1807,7 +1871,7 @@ public sealed partial class StrategyBehaviour : MonoBehaviour
     }
 
     private static bool IsWeeklyPortalPlan(QuestPlan plan) =>
-        plan?.Source == QuestSource.Weekly && plan.Type == QuestType.GoThroughPortals;
+        plan?.Source == QuestSource.Weekly && plan.Type == QuestKind.GoThroughPortals;
 
     private static bool IsKillQuestStaff(SmartItem kind) => kind is
         SmartItem.DeathwaveScepter or SmartItem.BidimensionalStaff or SmartItem.AlternateDimensionStaff;

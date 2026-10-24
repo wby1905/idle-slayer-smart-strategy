@@ -72,6 +72,7 @@ public sealed partial class StrategyBehaviour
         }
 
         var effectActive = TryReadPaidSoulsEffect(out var paidSecondsLeft, out var paidMultiplier);
+        if (effectActive) PaidSoulsPurchaseCompatibility.ReconcileLiveEffect();
         if (PaidSoulsBurstOwnsControl && effectActive &&
             _paidSoulsPhase is PaidSoulsBurstPhase.PreparingMaterials or
                 PaidSoulsBurstPhase.TravelingToSoulMap or PaidSoulsBurstPhase.WaitingForChestHunt)
@@ -90,6 +91,8 @@ public sealed partial class StrategyBehaviour
                 BeginAdoptedPaidSoulsBurst(paidSecondsLeft, paidMultiplier);
                 return true;
             }
+
+            if (!PaidSoulsPurchaseCompatibility.CheckAvailability()) return false;
 
             if (!stable || Time.unscaledTime < _paidNextEligibilityScan ||
                 Time.unscaledTime < _paidEligibilityBlockedUntil) return false;
@@ -228,6 +231,14 @@ public sealed partial class StrategyBehaviour
 
             var confirmSeconds = Math.Max(0.5f, Plugin.Config.PaidSoulsPurchaseConfirmationSeconds.Value);
             if (Time.unscaledTime - _paidPurchaseRequestedAt < confirmSeconds) return true;
+            if (PaidSoulsPurchaseCompatibility.HasUnresolvedPurchase)
+            {
+                SmartLog.Warning(SmartLogCategory.Endgame,
+                    "The native purchase was invoked but its exact charge/effect result is unresolved. " +
+                    "Automatic purchases remain locked for this session until reconciliation; releasing the exclusive route.");
+                FinishPaidSoulsBurst("purchase outcome is unresolved; no automatic retry");
+                return false;
+            }
             _paidPurchaseFailures++;
             var spent = _paidBalanceBeforePurchase - CurrentJewelsOfSoul();
             if (spent > 0.5)
@@ -334,6 +345,7 @@ public sealed partial class StrategyBehaviour
 
     internal bool PreparePaidSoulsPurchaseForChestHunt()
     {
+        if (!PaidSoulsPurchaseCompatibility.Available) return false;
         if (!Plugin.Config.Enabled.Value || _emergencyStopped ||
             !Plugin.Config.PaidSoulsChestBurstEnabled.Value ||
             _paidSoulsPhase != PaidSoulsBurstPhase.WaitingForChestHunt) return false;
@@ -420,7 +432,7 @@ public sealed partial class StrategyBehaviour
             _paidWaitForChestCompletion = true;
             _paidChestObservedAfterPurchase = ChestHuntInProgress();
             _paidSoulsPhase = PaidSoulsBurstPhase.PurchaseRequested;
-            purchase._PurchaseHandler_b__10_0();
+            PaidSoulsPurchaseCompatibility.RequestPurchase(purchase, cost);
             SmartLog.Info(SmartLogCategory.Endgame,
                 $"Called the native {tier}x Souls purchase entry at the Chest Hunt key pre-trigger: cost={cost:0}, " +
                 $"balance before purchase={balance:0}, reserve={reserve}. Waiting for live-effect confirmation without repeating this call.");
@@ -428,7 +440,10 @@ public sealed partial class StrategyBehaviour
         }
         catch (Exception ex)
         {
-            _paidSoulsPhase = PaidSoulsBurstPhase.WaitingForChestHunt;
+            // A native exception can happen after charging. Keep the request latched and let the
+            // existing balance/effect reconciliation decide; never immediately reopen the purchase.
+            if (_paidSoulsPhase != PaidSoulsBurstPhase.PurchaseRequested)
+                FinishPaidSoulsBurst("pre-purchase preparation failed before a charge was requested");
             _paidPurchaseRequestedAt = Time.unscaledTime;
             SmartLog.Warning(SmartLogCategory.Endgame,
                 $"Paid Souls purchase call failed; Chest Hunt was allowed and the call will not repeat during this event: {ex.GetType().Name}: {ex.Message}");
@@ -952,13 +967,15 @@ public sealed partial class StrategyBehaviour
             PaidSoulsEquipmentProgressReady(out _paidEquipmentSummary);
             var tierMode = PaidSoulsTestTier() > 0 ? $"test tier={PaidSoulsTestTier()}x" : "tier=automatic highest";
             return $"Paid Souls burst: idle, {tierMode}, Jewels={CurrentJewelsOfSoul():0}, " +
-                   $"reserve={Math.Max(0, Plugin.Config.PaidSoulsJewelReserve.Value)}, {_paidPlateauSummary}; {_paidEquipmentSummary}";
+                   $"reserve={Math.Max(0, Plugin.Config.PaidSoulsJewelReserve.Value)}, " +
+                   $"purchase={PaidSoulsPurchaseCompatibility.Status}, {_paidPlateauSummary}; {_paidEquipmentSummary}";
         }
         TryReadPaidSoulsEffect(out var seconds, out var multiplier);
         var chestGate = _paidWaitForChestCompletion
             ? _paidChestObservedAfterPurchase ? "entered, waiting for exit" : "waiting for entry"
             : "burst released";
         return $"Paid Souls burst: phase={_paidSoulsPhase}, tier={Math.Max(multiplier, _paidTierMultiplier)}x/{_paidTierCost:0}, " +
+               $"purchase={PaidSoulsPurchaseCompatibility.Status}, " +
                $"Rage Pill uses={CurrentRagePillCraftableUses():0}/{_paidTargetRagePillUses}, Chest Hunt gate={chestGate}, " +
                $"highest-Souls map={_paidTargetSoulMap?.Map?.name ?? "not locked"}, paid time remaining={seconds:0.0}s";
     }

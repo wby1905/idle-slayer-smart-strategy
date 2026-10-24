@@ -6,7 +6,8 @@ internal enum QuestSource
 {
     Normal,
     Daily,
-    Weekly
+    Weekly,
+    Event
 }
 
 internal sealed class QuestPlan
@@ -24,10 +25,11 @@ internal sealed class QuestPlan
     internal int InstanceId { get; }
     internal int Current => Quest?.questCurrentGoal ?? 0;
     internal int Goal => Quest?.questGoal ?? 0;
-    internal QuestType Type => Quest?.questType ?? QuestType.KillEnemies;
+    internal QuestKind Type => Quest.GetKind();
     internal bool TargetsGiants => QuestDirector.TargetsGiant(Quest);
     internal bool RequiresRageForBowAutomation => QuestDirector.TargetCannotBeKilledWithArrows(Quest);
     internal bool IsCollab => QuestDirector.IsCollabQuest(Quest);
+    internal bool UsesUnboostedProgress => QuestApi.UsesUnboostedProgress(Quest);
     internal string Name => string.IsNullOrWhiteSpace(Quest?.localizedName)
         ? Quest?.name ?? "Unknown Quest"
         : Quest.localizedName;

@@ -17,15 +17,13 @@ internal static class ChestHuntStartPatch
     }
 }
 
-// The normal key path creates this coroutine directly from ChestHuntKey.OnTriggerStay2D instead of
-// calling ChestHuntManager.StartEvent. Run preparation only on the first MoveNext (state=0), avoiding
-// repeated evaluation after a yield or a purchase after the minigame has already started.
-[HarmonyPatch(typeof(ChestHuntManager._StartEventDelayed_d__66), "MoveNext")]
+// The normal key path calls this stable coroutine factory directly. Hook creation once, rather
+// than a compiler-numbered MoveNext class that changes whenever the game adds fields or methods.
+[HarmonyPatch(typeof(ChestHuntManager), nameof(ChestHuntManager.StartEventDelayed))]
 internal static class ChestHuntDelayedStartPatch
 {
-    private static void Prefix(ChestHuntManager._StartEventDelayed_d__66 __instance)
+    private static void Prefix()
     {
-        if (__instance == null || __instance.__1__state != 0) return;
         try
         {
             StrategyBehaviour.Current?.PrepareForChestHunt("native Chest Hunt coroutine prefix");

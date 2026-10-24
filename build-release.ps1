@@ -1,5 +1,6 @@
 param(
     [string]$GameDirectory = $env:IDLE_SLAYER_GAME_DIR,
+    [string]$AssembliesDirectory,
     [string]$Configuration = 'Release',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'artifacts')
 )
@@ -20,6 +21,16 @@ if (![string]::IsNullOrWhiteSpace($GameDirectory))
         throw "GameDirectory does not point to an Idle Slayer installation: $resolvedGameDirectory"
     }
     $buildArguments += "-p:IdleSlayerGameDir=$resolvedGameDirectory"
+}
+
+if (![string]::IsNullOrWhiteSpace($AssembliesDirectory))
+{
+    $resolvedAssembliesDirectory = [System.IO.Path]::GetFullPath($AssembliesDirectory)
+    if (!(Test-Path -LiteralPath (Join-Path $resolvedAssembliesDirectory 'Assembly-CSharp.dll')))
+    {
+        throw "AssembliesDirectory must contain freshly generated game interop assemblies."
+    }
+    $buildArguments += "-p:IdleSlayerAssembliesDir=$resolvedAssembliesDirectory"
 }
 
 & dotnet @buildArguments
