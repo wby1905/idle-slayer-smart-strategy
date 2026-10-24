@@ -112,15 +112,8 @@ internal static class QuestApi
         catch { return false; }
     }
 
-    // Native EnemySlayed, CollectablePickedUp and AddProgress bypass temporary quest-credit
-    // bonuses for map events. Rage/Wind Dash kills retain the game's separate collab exception.
-    internal static bool UsesUnboostedProgress(Quest quest)
-    {
-        if (quest == null) return false;
-        if (quest.mapEvent != null) return true;
-        return quest.fromCollab != null &&
-               quest.GetKind() is not (QuestKind.KillEnemiesWithRageMode or QuestKind.WindDashKills);
-    }
+    internal static bool UsesUnboostedProgress(Quest quest) =>
+        QuestEffectPolicy.ReadCreditRule(quest) != QuestCreditRule.ProgressBonuses;
 
     internal static void Reset()
     {

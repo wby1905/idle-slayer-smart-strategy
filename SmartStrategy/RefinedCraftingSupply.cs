@@ -4,7 +4,23 @@ using UnityEngine;
 namespace SmartStrategy;
 
 internal readonly record struct RefineryRecipeRequest(TemporaryCraftableItem Item, int Copies, int Priority,
-    bool Immediate = false, double? DeadlineSeconds = null);
+    bool Immediate = false, double? DeadlineSeconds = null, bool AllowRawFarming = true,
+    int QuestPlanId = 0, string Purpose = null, bool AllowPremium = true,
+    Quest Task = null, SmartItem? TaskItem = null)
+{
+    internal const int SurplusPriority = 50;
+    internal const int IdlePriority = 100;
+    internal bool IsApplicable
+    {
+        get
+        {
+            if (QuestPlanId == 0) return true;
+            try { return Task != null && Task.GetInstanceID() == QuestPlanId && TaskItem.HasValue &&
+                QuestEffectPolicy.CanSpend(Task, TaskItem.Value); }
+            catch { return false; }
+        }
+    }
+}
 
 // Uses the native backend, never the Village popup. No timer editing, cancellation or discarding.
 internal sealed class RefinedCraftingSupply
@@ -12,6 +28,7 @@ internal sealed class RefinedCraftingSupply
     private const double Epsilon = 0.0001;
     private const string RefineryBuildingId = "ihda7gqmgppigg8u88lq";
     private readonly CraftableCatalog _safetyCatalog = new();
+    internal CraftSupplyPlanner SupplyPlanner { get; } = new();
     private readonly RefineryPremiumPolicy _premium = new();
     private readonly List<Need> _needs = new();
     private readonly Dictionary<string, double> _directRecipeStock = new(StringComparer.Ordinal);
@@ -89,21 +106,38 @@ internal sealed class RefinedCraftingSupply
                 return Claim(manager, i, output, claimable, stock);
             }
             if (!allowNewWork) return false;
-            var empty = Enumerable.Range(0, usable).Where(i => Empty(manager.slots[i])).ToArray();
-            if (empty.Length > 0)
-                foreach (var need in _needs.OrderBy(n => n.Priority)
-                             .ThenBy(n => (n.Output.amount + Pending(n.Output)) / Math.Max(1, n.Wanted)))
+            var schedule = RefineryForecast.Plan(_snapshot, ScheduleDemands(DemandScope.Recipes), usable,
+                RefineryManager.SECONDS_PER_CYCLE, Math.Clamp(Plugin.Config.RefineryMaximumBatchOutputs.Value, 1, 100));
+            foreach (var job in schedule.Jobs)
+            {
+                if (job.StartSeconds > Epsilon) continue;
+                var need = _needs.FirstOrDefault(n => Key(n.Output) == job.OutputKey);
+                if (need != null && Empty(manager.slots[job.SlotIndex]))
+                    return Start(manager, job.SlotIndex, need, job.Outputs, ProtectedRawStock(need.Raw));
+            }
+            var surplusRecipes = RefineryForecast.Plan(_snapshot, ScheduleDemands(DemandScope.SurplusRecipes), usable,
+                RefineryManager.SECONDS_PER_CYCLE, IdleBatchLimit());
+            foreach (var job in surplusRecipes.Jobs)
+            {
+                if (job.StartSeconds > Epsilon) continue;
+                var need = _needs.FirstOrDefault(n => Key(n.Output) == job.OutputKey);
+                if (need != null && Empty(manager.slots[job.SlotIndex]))
+                    return Start(manager, job.SlotIndex, need, job.Outputs, ProtectedRawStock(need.Raw), idle: true);
+            }
+            // Only funded recipe work can occupy a slot ahead of background stock. Idle work
+            // uses short batches and ranks projected fullness, so pending output also balances slots.
+            if (Plugin.Config.RefineryIdleStockEnabled.Value)
+            {
+                var idleSchedule = RefineryForecast.Plan(_snapshot, IdleDemands(), usable,
+                    RefineryManager.SECONDS_PER_CYCLE, IdleBatchLimit());
+                foreach (var job in idleSchedule.Jobs)
                 {
-                    if (!Stock(need.Output, out var stock, out var capacity)) continue;
-                    var gap = Math.Min(need.Wanted, capacity) - stock - Pending(need.Output);
-                    var reserve = ProtectedRawStock(need.Raw);
-                    var affordable = Math.Floor((need.Raw.amount - reserve + Epsilon) / RefineryManager.MATERIALS_PER_OUTPUT);
-                    var batch = Math.Min(Math.Clamp(Plugin.Config.RefineryMaximumBatchOutputs.Value, 1, 100),
-                        Math.Min(Math.Floor(capacity - stock - Pending(need.Output) + Epsilon),
-                            Math.Min(Math.Ceiling(gap - Epsilon), affordable)));
-                    if (!Positive(batch)) continue;
-                    return Start(manager, empty[0], need, (int)batch, reserve);
+                    if (job.StartSeconds > Epsilon) continue;
+                    var need = _needs.FirstOrDefault(n => Key(n.Output) == job.OutputKey);
+                    if (need != null && Empty(manager.slots[job.SlotIndex]))
+                        return Start(manager, job.SlotIndex, need, job.Outputs, ProtectedRawStock(need.Raw), idle: true);
                 }
+            }
             return _canForecast && TryPremium(manager, usable, requests);
         }
         catch (Exception ex)
@@ -126,10 +160,14 @@ internal sealed class RefinedCraftingSupply
         var rawByOutput = new Dictionary<string, Drop>(StringComparer.Ordinal);
         foreach (var raw in sources)
             if (raw != null && !raw.locked && raw.refinedTarget != null && !Same(raw, raw.refinedTarget) &&
-                Stock(raw, out _, out _) && Stock(raw.refinedTarget, out _, out _))
+                RawStock(raw, out _, out _) && Stock(raw.refinedTarget, out _, out _))
                 rawByOutput.TryAdd(Key(raw.refinedTarget), raw);
-        foreach (var request in requests)
+        // Several simultaneous quests can use the same active effect. Reserve the largest requested
+        // number of copies of that item, not one identical recipe per quest.
+        foreach (var group in requests.Where(r => r.Item != null && r.IsApplicable).GroupBy(r => r.Item.GetInstanceID()))
         {
+            var first = group.OrderBy(r => r.Priority).First();
+            var request = first with { Copies = group.Max(r => r.Copies), AllowRawFarming = group.Any(r => r.AllowRawFarming) };
             if (request.Copies <= 0 || !CraftableCatalog.HasUnlockedRecipe(request.Item)) continue;
             var requirements = request.Item.GetRequirements();
             if (requirements == null) continue;
@@ -154,8 +192,10 @@ internal sealed class RefinedCraftingSupply
                 var need = _needs.FirstOrDefault(n => Same(n.Output, r.material));
                 if (need == null) _needs.Add(need = new Need(raw, r.material));
                 need.RecipeWanted += wanted;
+                if (request.AllowRawFarming) need.FarmWanted += wanted;
+                if (request.Priority < need.Priority)
+                { need.Purpose = request.Purpose ?? request.Item.name; need.QuestPlanId = request.QuestPlanId; }
                 need.Priority = Math.Min(need.Priority, request.Priority);
-                need.Purpose = request.Item.name;
             }
         }
         foreach (var need in _needs)
@@ -163,15 +203,19 @@ internal sealed class RefinedCraftingSupply
             need.RecipeWanted = Math.Min(need.Output.GetMaxAmount(),
                 need.RecipeWanted + MaterialReservePolicy.MinimumReserve(need.Output));
             need.Wanted = need.RecipeWanted;
+            if (need.FarmWanted > 0) need.FarmWanted = Math.Min(need.Output.GetMaxAmount(),
+                need.FarmWanted + MaterialReservePolicy.MinimumReserve(need.Output));
         }
         if (!Plugin.Config.RefineryIdleStockEnabled.Value) return;
+        var fillCapacity = Plugin.Config.RefineryFillIdleSlotsToCapacity.Value;
         var idleTarget = Math.Clamp(Plugin.Config.RefineryIdleStockPerMaterial.Value, 0, 100);
-        if (idleTarget == 0) return;
+        if (!fillCapacity && idleTarget == 0) return;
         foreach (var raw in rawByOutput.Values)
         {
             var need = _needs.FirstOrDefault(n => Same(n.Output, raw.refinedTarget));
             if (need == null) _needs.Add(need = new Need(raw, raw.refinedTarget));
-            need.Wanted = Math.Min(need.Output.GetMaxAmount(), Math.Max(need.Wanted, idleTarget));
+            need.Wanted = fillCapacity ? need.Output.GetMaxAmount()
+                : Math.Min(need.Output.GetMaxAmount(), Math.Max(need.Wanted, idleTarget));
         }
     }
 
@@ -190,14 +234,17 @@ internal sealed class RefinedCraftingSupply
                 throw new InvalidOperationException($"Invalid native refinery slot {i + 1}");
             var unclaimed = slot.TotalOutputs - slot.amountClaimed;
             var claimable = slot.GetClaimableOutputs();
-            if (!NonNegative(claimable) || claimable > unclaimed + Epsilon || unclaimed > int.MaxValue)
+            if (!NonNegative(claimable) || claimable > unclaimed + Epsilon || unclaimed > int.MaxValue ||
+                Math.Abs(unclaimed - Math.Round(unclaimed)) > Epsilon || Math.Abs(claimable - Math.Round(claimable)) > Epsilon)
                 throw new InvalidOperationException($"Invalid native output count in slot {i + 1}");
             _pending.TryGetValue(Key(output), out var pending);
             _pending[Key(output)] = pending + unclaimed;
             var owned = IsOwned(i, slot);
             if (!owned) _owned.Remove(i);
+            var canReuse = Stock(output, out var outputStock, out var outputCapacity) &&
+                unclaimed <= outputCapacity - outputStock + Epsilon;
             _snapshot.Add(new RefineryForecastSlot(i, Key(output), slot.remainingTime,
-                (int)Math.Round(unclaimed - claimable), (int)Math.Round(claimable), owned));
+                (int)Math.Round(unclaimed - claimable), (int)Math.Round(claimable), owned, canReuse));
         }
         foreach (var slot in manager.slots)
         {
@@ -211,28 +258,57 @@ internal sealed class RefinedCraftingSupply
 
     private bool Claim(RefineryManager manager, int index, Drop output, double claimable, double before)
     {
+        var detail = $"slot={index + 1}, output={Name(output)}, requested={claimable:R}, stockBefore={before:R}";
         try
         {
-            var result = manager.ClaimSlot(index);
-            if (Math.Abs(output.amount - before - claimable) > Epsilon ||
-                Math.Abs(result.Item1 - claimable) > Epsilon || Math.Abs(result.Item2) > Epsilon)
-                throw new InvalidOperationException("Claim result did not match the inventory change");
-            Log($"Refinery collected {claimable:0} {Name(output)} from slot {index + 1}.");
+            var originalSlot = manager.slots[index];
+            var originalPointer = originalSlot.Pointer;
+            var originalRaw = originalSlot.material;
+            var originalTotal = originalSlot.totalAmount;
+            var originalClaimed = originalSlot.amountClaimed;
+            var originalOutputs = originalSlot.TotalOutputs;
+            var originalTime = originalSlot.remainingTime;
+            Exception invocationFailure = null;
+            try
+            {
+                // Current generated ValueTuple<double,double>.Item1/Item2 use the broken
+                // PointerToValueGeneric(fieldAddress, true, false) boxing path. Native ClaimSlot
+                // itself is synchronous. Ignore that return wrapper and verify its actual writes.
+                _ = manager.ClaimSlot(index);
+            }
+            catch (Exception ex) { invocationFailure = ex; }
+            var after = output.amount;
+            var added = after - before;
+            var slot = manager.slots[index];
+            var expectedClaimed = originalClaimed + added;
+            var shouldClear = expectedClaimed + Epsilon >= originalOutputs;
+            var accounted = slot != null && slot.Pointer == originalPointer &&
+                (shouldClear ? Empty(slot) : Same(slot.material, originalRaw) &&
+                 Math.Abs(slot.totalAmount - originalTotal) <= Epsilon &&
+                 NonNegative(slot.remainingTime) && slot.remainingTime <= originalTime + Epsilon &&
+                 NonNegative(slot.amountClaimed) && Math.Abs(slot.amountClaimed - expectedClaimed) <= Epsilon);
+            detail += $", stockAfter={after:R}, added={added:R}, claimedBefore={originalClaimed:R}, " +
+                $"claimedAfter={slot?.amountClaimed.ToString("R") ?? "missing"}, totalOutputs={originalOutputs:R}, " +
+                $"cleared={slot != null && Empty(slot)}, slotAccounted={accounted}, " +
+                $"nativeException={invocationFailure?.GetType().Name ?? "none"}";
+            if (invocationFailure != null || !NonNegative(after) || !Positive(added) || added > claimable + Epsilon || !accounted)
+                throw new InvalidOperationException("Native claim or inventory/queue confirmation was uncertain", invocationFailure);
+            Log($"Refinery collected {added:0.##}/{claimable:0.##} {Name(output)} from slot {index + 1}; inventory and queue verified.");
             ReadQueues(manager);
             _lastSnapshotAt = Time.unscaledTime;
             return true;
         }
-        catch (Exception ex) { Suspend("claim", ex); return false; }
+        catch (Exception ex) { Suspend("claim", new InvalidOperationException($"{ex.Message}; {detail}", ex)); return false; }
     }
 
-    private bool Start(RefineryManager manager, int index, Need need, int count, double reserve)
+    private bool Start(RefineryManager manager, int index, Need need, int count, double reserve, bool idle = false)
     {
         var raw = need.Raw;
         var cost = count * RefineryManager.MATERIALS_PER_OUTPUT;
         try
         {
             if (count <= 0 || raw.locked || index >= manager.unlockedSlots || !Empty(manager.slots[index]) ||
-                !Stock(raw, out var before, out _) || before - cost + Epsilon < reserve ||
+                !RawStock(raw, out var before, out _) || before - cost + Epsilon < reserve ||
                 !Stock(need.Output, out var outputStock, out var capacity) ||
                 outputStock + Pending(need.Output) + count > capacity + Epsilon) return false;
             if (!manager.StartRefining(index, raw, count))
@@ -252,7 +328,7 @@ internal sealed class RefinedCraftingSupply
             _lastSnapshotAt = Time.unscaledTime;
             Log($"Refinery queued {count} {Name(need.Output)} using {cost:0} {Name(raw)}; " +
                 $"slot={index + 1}, duration={count * RefineryManager.SECONDS_PER_CYCLE / 60:0.#}m, " +
-                $"purpose={need.Purpose ?? "surplus buffer"}, raw reserve={reserve:0}.");
+                $"purpose={(idle ? "background stock refill" : need.Purpose ?? "recipe supply")}, raw reserve={reserve:0}.");
             return true;
         }
         catch (Exception ex) { Suspend("start", ex); return false; }
@@ -268,7 +344,7 @@ internal sealed class RefinedCraftingSupply
         var bestCost = 0d;
         var bestGain = 0d;
         if (config.RefinerySpeedupEnabled.Value)
-            foreach (var request in requests.Where(r => r.Immediate).OrderBy(r => r.Priority))
+            foreach (var request in requests.Where(r => r.IsApplicable && r.Immediate && r.AllowPremium).OrderBy(r => r.Priority))
             {
                 if (!FundedDemands(request, out var demands) || demands.Count == 0) continue;
                 // Deadline decisions use only fixed native queues: no optimistic future batch
@@ -283,7 +359,8 @@ internal sealed class RefinedCraftingSupply
                     var estimate = RefineryForecast.EvaluateSpeedup(_snapshot, demands, usable,
                         RefineryManager.SECONDS_PER_CYCLE, slot.Index, cost,
                         config.RefineryMinimumSecondsSavedPerJewel.Value,
-                        config.RefineryMinimumSpeedupMinutes.Value * 60, request.DeadlineSeconds);
+                        config.RefineryMinimumSpeedupMinutes.Value * 60, request.DeadlineSeconds,
+                        Math.Clamp(config.RefineryMaximumBatchOutputs.Value, 1, 100));
                     // Missing the whole event is not useful, even if an individual slot is faster.
                     if (!estimate.Eligible || request.DeadlineSeconds.HasValue && !estimate.CanMeetDeadline ||
                         !Positive(cost) || estimate.SavedSeconds / cost <= bestGain) continue;
@@ -296,35 +373,81 @@ internal sealed class RefinedCraftingSupply
         if (config.RefineryBuySlotsEnabled.Value && usable < Math.Min(RefineryManager.MAX_SLOTS,
                 Math.Clamp(config.RefineryMaximumSlots.Value, 1, 3)) && usable < manager.slots.Length && Empty(manager.slots[usable]))
         {
-            var backlog = _needs.Where(n => n.RecipeWanted > 0)
-                .Select(n => new RefineryForecastDemand(Key(n.Output), Missing(n.Output, n.RecipeWanted)))
-                .Where(d => d.MissingOutputs > 0).ToArray();
+            var backlog = ScheduleDemands(DemandScope.PurchaseEligible);
             // Aggregate, not per-recipe: shared raw inventory cannot fund two jobs at once.
-            var funded = _needs.Where(n => n.RecipeWanted > 0).All(n =>
-                Math.Max(0, Missing(n.Output, n.RecipeWanted) - Pending(n.Output)) * RefineryManager.MATERIALS_PER_OUTPUT
+            var funded = _needs.Where(n => n.FarmWanted > 0).All(n =>
+                Math.Max(0, Missing(n.Output, n.FarmWanted) - Pending(n.Output)) * RefineryManager.MATERIALS_PER_OUTPUT
                 <= Math.Max(0, n.Raw.amount - ProtectedRawStock(n.Raw)) + Epsilon);
             if (backlog.Length > 0 && funded)
             {
                 var estimate = RefineryForecast.EvaluateNewSlot(_snapshot, backlog, usable,
                     RefineryManager.SECONDS_PER_CYCLE, RefineryManager.UNLOCK_SLOT_COST, 0,
-                    config.RefineryMinimumSlotGainMinutes.Value * 60);
+                    config.RefineryMinimumSlotGainMinutes.Value * 60, maxBatchOutputs:
+                    Math.Clamp(config.RefineryMaximumBatchOutputs.Value, 1, 100));
                 if (estimate.Eligible && estimate.SecondsPerJewel > bestGain)
                 { unlock = true; bestCost = RefineryManager.UNLOCK_SLOT_COST; }
             }
         }
         if (!unlock && bestSlot < 0) return false;
-        var limits = new RefineryPremiumLimits(Math.Max(config.RefineryJewelReserve.Value,
-            config.PaidSoulsJewelReserve.Value), config.RefineryDailyJewelBudget.Value);
-        var succeeded = _premium.TryExecute(manager, unlock ? -1 : bestSlot, unlock, bestCost, limits, out var message);
+        var succeeded = _premium.TryExecute(manager, unlock ? -1 : bestSlot, unlock, bestCost, out var message);
         if (succeeded) { ReadQueues(manager); _lastSnapshotAt = Time.unscaledTime; Log(message); }
         else { _status += "; " + message; Warn(message); }
         return succeeded;
     }
 
+    private enum DemandScope { Recipes, SurplusRecipes, PurchaseEligible }
+
+    private RefineryForecastDemand[] ScheduleDemands(DemandScope scope)
+    {
+        return _needs.Where(n => scope switch
+        {
+            DemandScope.Recipes => n.RecipeWanted > 0 && n.Priority < RefineryRecipeRequest.SurplusPriority,
+            DemandScope.SurplusRecipes => n.RecipeWanted > 0 && n.Priority >= RefineryRecipeRequest.SurplusPriority,
+            _ => n.FarmWanted > 0
+        }).Select(n =>
+        {
+            var wanted = scope == DemandScope.PurchaseEligible ? n.FarmWanted : n.RecipeWanted;
+            var affordable = Math.Floor(Math.Max(0, n.Raw.amount - ProtectedRawStock(n.Raw)) /
+                RefineryManager.MATERIALS_PER_OUTPUT);
+            var capacity = Math.Floor(Math.Max(0, n.Output.GetMaxAmount() - n.Output.amount - Pending(n.Output)));
+            return new RefineryForecastDemand(Key(n.Output), Missing(n.Output, wanted), n.Priority,
+                (int)Math.Clamp(Math.Min(affordable, capacity), 0, int.MaxValue));
+        }).Where(d => d.MissingOutputs > 0).ToArray();
+    }
+
+    private int IdleBatchLimit() => Math.Clamp(Plugin.Config.RefineryIdleBatchOutputs.Value, 1,
+        Math.Clamp(Plugin.Config.RefineryMaximumBatchOutputs.Value, 1, 100));
+
+    private RefineryForecastDemand[] IdleDemands()
+    {
+        // Rank only live, affordable deficits. Full-bag/raw-pressure is a tie breaker, not a
+        // reason to consume task/Pill/Whetstone reserves. Limit the horizon to one short batch
+        // per material so a large native capacity cannot overflow the bounded scheduler.
+        return _needs.Where(n => n.Wanted > n.Output.amount + Pending(n.Output) + Epsilon)
+            .Select(n => new
+            {
+                Need = n,
+                Projected = n.Output.amount + Pending(n.Output),
+                Affordable = Math.Floor(Math.Max(0, n.Raw.amount - ProtectedRawStock(n.Raw)) /
+                    RefineryManager.MATERIALS_PER_OUTPUT)
+            })
+            .Where(n => n.Affordable >= 1)
+            .OrderBy(n => n.Projected / Math.Max(1, n.Need.Wanted))
+            .ThenByDescending(n => n.Need.Raw.amount / Math.Max(1, n.Need.Raw.GetMaxAmount()))
+            .ThenBy(n => Key(n.Need.Output), StringComparer.Ordinal)
+            .Select((n, rank) =>
+            {
+                var count = (int)Math.Min(IdleBatchLimit(), Math.Min(n.Affordable,
+                    Math.Floor(n.Need.Wanted - n.Projected + Epsilon)));
+                return new RefineryForecastDemand(Key(n.Need.Output),
+                    Missing(n.Need.Output, n.Projected + Math.Max(0, count)), RefineryRecipeRequest.IdlePriority + rank, Math.Max(0, count));
+            }).Where(n => n.MaximumNewOutputs > 0).ToArray();
+    }
+
     private bool FundedDemands(RefineryRecipeRequest request, out List<RefineryForecastDemand> demands)
     {
         demands = new();
-        if (!CraftableCatalog.HasUnlockedRecipe(request.Item)) return false;
+        if (!request.IsApplicable || !CraftableCatalog.HasUnlockedRecipe(request.Item)) return false;
         var requirements = request.Item.GetRequirements();
         if (requirements == null) return false;
         foreach (var r in requirements)
@@ -359,10 +482,10 @@ internal sealed class RefinedCraftingSupply
         MaterialNeed best = null;
         var bestSeconds = double.PositiveInfinity;
         var bestPriority = int.MaxValue;
-        foreach (var need in _needs.Where(n => n.RecipeWanted > 0).OrderBy(n => n.Priority))
+        foreach (var need in _needs.Where(n => n.FarmWanted > 0).OrderBy(n => n.Priority))
         {
             if (need.Priority > bestPriority) break;
-            var gap = Math.Max(0, Missing(need.Output, need.RecipeWanted) - Pending(need.Output));
+            var gap = Math.Max(0, Missing(need.Output, need.FarmWanted) - Pending(need.Output));
             if (gap <= 0 || !Stock(need.Raw, out var stock, out var capacity)) continue;
             var reserve = ProtectedRawStock(need.Raw);
             if (reserve + RefineryManager.MATERIALS_PER_OUTPUT > capacity + Epsilon) continue;
@@ -391,14 +514,14 @@ internal sealed class RefinedCraftingSupply
     {
         if (!Plugin.Config.SupplementalRefiningEnabled.Value || !Plugin.Config.RefineryRawMaterialFarming.Value ||
             _writesSuspended || Time.unscaledTime - _lastSnapshotAt > 10) return false;
-        var need = _needs.FirstOrDefault(n => Same(n.Raw, raw) && n.RecipeWanted > 0);
+        var need = _needs.FirstOrDefault(n => Same(n.Raw, raw) && n.FarmWanted > 0);
         if (need == null) return false;
-        var gap = Math.Max(0, Missing(need.Output, need.RecipeWanted) - Pending(need.Output));
+        var gap = Math.Max(0, Missing(need.Output, need.FarmWanted) - Pending(need.Output));
         return gap > 0 && raw.amount + Epsilon < Math.Min(raw.GetMaxAmount(),
             ProtectedRawStock(raw) + gap * RefineryManager.MATERIALS_PER_OUTPUT);
     }
 
-    private double ProtectedRawStock(Drop raw)
+    internal double ProtectedRawStock(Drop raw)
     {
         var name = CraftableCatalog.Normalize(raw.name);
         var fallback = name.EndsWith("titanium", StringComparison.Ordinal) ? 9d :
@@ -432,7 +555,7 @@ internal sealed class RefinedCraftingSupply
     }
     private double Pending(Drop output) => _pending.TryGetValue(Key(output), out var value) ? value : 0;
     private static int Missing(Drop output, double wanted) => (int)Math.Clamp(Math.Ceiling(wanted - output.amount - Epsilon), 0, int.MaxValue);
-    private static bool FeatureUnlocked()
+    internal static bool FeatureUnlocked()
     {
         if (Upgrades.list?.BookOfRefinement?.bought != true) return false;
         var buildings = PlayerInventory.instance?.buildings;
@@ -449,6 +572,13 @@ internal sealed class RefinedCraftingSupply
         stock = drop.amount;
         capacity = drop.GetMaxAmount();
         return NonNegative(stock) && Positive(capacity) && stock <= capacity + Epsilon;
+    }
+    private static bool RawStock(Drop drop, out double stock, out double capacity)
+    {
+        stock = drop.amount;
+        capacity = drop.GetMaxAmount();
+        // Reducing a legitimate over-cap input stack is safe; only output space must be bounded.
+        return NonNegative(stock) && Positive(capacity);
     }
     internal static bool Same(Drop left, Drop right) => left != null && right != null &&
         (left == right || !string.IsNullOrEmpty(left.id) && left.id == right.id);
@@ -481,8 +611,9 @@ internal sealed class RefinedCraftingSupply
     private sealed class Need
     {
         internal readonly Drop Raw, Output;
-        internal double RecipeWanted, Wanted;
-        internal int Priority = 100;
+        internal double RecipeWanted, Wanted, FarmWanted;
+        internal int QuestPlanId;
+        internal int Priority = RefineryRecipeRequest.IdlePriority;
         internal string Purpose;
         internal Need(Drop raw, Drop output) { Raw = raw; Output = output; }
     }

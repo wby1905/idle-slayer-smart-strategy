@@ -12,7 +12,7 @@ Smart Strategy runs inside the game process. It can automate progression and cha
 
 Update to the newest available release before reporting a security problem.
 
-Refinery purchases use a separate budget journal and stop when a charge cannot be confirmed. Keep that journal intact while investigating an unexpected charge; restarting the game does not clear its pending marker.
+Paid Souls and refinery purchases share a budget journal and stop when either consumer has an unconfirmed charge. Keep that journal and any migrated refinery journal intact while investigating an unexpected charge; restarting the game does not clear a pending marker.
 
 ## Reporting a vulnerability
 

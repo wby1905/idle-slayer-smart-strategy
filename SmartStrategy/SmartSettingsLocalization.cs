@@ -79,7 +79,8 @@ internal enum SmartSettingsText
     RefineryRawFarming,
     RefineryIdleStock,
     RefineryBuySlots,
-    RefinerySpeedup
+    RefinerySpeedup,
+    RefineryFillIdleSlots
 }
 
 internal static class SmartSettingsLocalization
@@ -137,7 +138,8 @@ internal static class SmartSettingsLocalization
             [SmartSettingsText.CpsSpyglass] = "Normal mode: CPS Spyglass during coin multipliers",
             [SmartSettingsText.SupplementalRefining] = "Automatic refinery queues and recipe planning",
             [SmartSettingsText.RefineryRawFarming] = "Supply refinery raw materials without displacing concrete quests",
-            [SmartSettingsText.RefineryIdleStock] = "Use surplus raw materials for a small refined-stock buffer",
+            [SmartSettingsText.RefineryIdleStock] = "Use surplus raw materials to keep free refinery slots working",
+            [SmartSettingsText.RefineryFillIdleSlots] = "Background refinery stock: fill to material capacity",
             [SmartSettingsText.RefineryBuySlots] = "Spend Jewels to unlock worthwhile refinery slots (budgeted)",
             [SmartSettingsText.RefinerySpeedup] = "Spend Jewels to accelerate useful automatic queues (budgeted)",
             [SmartSettingsText.ChestPreparation] = "Prepare Souls bonuses before Chest Hunt",
@@ -210,7 +212,8 @@ internal static class SmartSettingsLocalization
             [SmartSettingsText.CpsSpyglass] = "普通模式：金币倍率期间使用 CpS 望远镜",
             [SmartSettingsText.SupplementalRefining] = "自动精炼：管理队列并按完整配方备料",
             [SmartSettingsText.RefineryRawFarming] = "自动补精炼原料（不打断具体目标任务）",
-            [SmartSettingsText.RefineryIdleStock] = "用富余原料储备少量精炼产物",
+            [SmartSettingsText.RefineryIdleStock] = "用富余原料利用空闲精炼槽",
+            [SmartSettingsText.RefineryFillIdleSlots] = "空闲精炼持续补库，直到材料上限",
             [SmartSettingsText.RefineryBuySlots] = "允许花宝石开精炼槽（受预算限制）",
             [SmartSettingsText.RefinerySpeedup] = "允许花宝石加速有效自动队列（受预算限制）",
             [SmartSettingsText.ChestPreparation] = "宝箱小游戏前准备灵魂增益",

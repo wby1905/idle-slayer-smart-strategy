@@ -6,34 +6,29 @@ Unreleased update for Idle Slayer 7.3.6 (Steam build 26139124), covering compati
 
 ### Fixed
 
-- Added normal-mode strategies and separate English/Chinese settings for Bunny Paw, Death Bringer and CpS Spyglass. They support event searches, ordinary Giant combat and coin-multiplier windows, respectively. The mod waits for an active effect to expire before crafting another. Bunny Paw also waits while a tracked Coins From Random Box quest needs coin rewards.
-- Added refinery supply for both Spyglasses, Critical Sword and the three additional craftables. The planner combines recipe demand, counts stock and queued output, and prepares replacement materials before buffs expire. It checks the Village building and Book of Refinement unlock, then limits each batch by demand, reserves and capacity.
-- Added refinery input routes that protect critical crafting stock and preserve routes for quests with specific targets. The mod can collect completed outputs after the original event ends. It keeps queues intact when output does not fit, without cancelling jobs or discarding materials.
-- Added separate switches for Jewel slot purchases and acceleration, both off by default. Estimates account for existing queues, available raw materials and the time needed to finish a complete recipe. Payments require the inspected game hash, a matching live price, sufficient reserves and a persisted UTC daily budget. The mod checks the exact deduction and result; an unresolved charge blocks further refinery spending across restarts.
-- AFK/endgame permanent craftables keep all three effects active together after their crafting prerequisites are unlocked. Their normal-mode switches do not limit this behavior, and maintaining these effects consumes no materials.
-- Automatic jump, Boost, Wind Dash and bow control now yield during Rage preparation, execution and ending. The mod releases its own unfinished jump and upward velocity before native Rage takes over, preventing the Sleepy Hollow mount from drifting upward in its kinematic movement state. Normal automation resumes after Rage ends.
-- Updated task handling for the game's new data-object API. Types are mapped through `QuestTypes.list` to stable internal keys, preserving existing calibration names and numeric values. Ordinary quests are read from loaded game objects with native eligibility checks, without relying on the removed task-list UI cache.
-- Active map-event quests are planned and claimed only while the event and task set are available. Those conditions are checked again before execution. Rerolls apply only to Daily and Weekly slots.
-- Visit Location and Kill Enemies in Location keep their required destination when quests are planned together. If a visit still needs an arrival while the player is already there, the route can leave and return without changing the quest's stored destination.
-- Event estimates, crafting and material plans use the game's raw progress rules. They no longer count quest staffs or other inapplicable progress multipliers. Raw-count samples are kept out of ordinary quest calibration.
-- Chest Hunt preparation uses the stable `StartEventDelayed` entry point, avoiding a generated coroutine class whose number changed in the game update.
-- Native hook groups load independently, so one incompatible hook does not prevent the others from loading. A task scan or planning failure clears stale plans and pauses that module before retrying; other strategy modules can continue.
-- Restored automatic Paid Souls purchases for the inspected Steam build. The adapter checks the exact GameAssembly SHA-256 before resolving the native purchase callback. Price, balance, reserve and existing effects are checked again immediately before the call.
-- Purchase calls are marked pending before invocation, including calls that throw after charging. Further automatic purchases in the same game session remain blocked until the exact charge and matching active effect are confirmed. Manually purchased bonuses can still be used by the strategy.
-- Specific Giant quests remain reachable when bow automation is assumed and rapid Giant attacks are enabled. Targets that cannot be killed with arrows, such as the Giant Gorilla, can again direct travel to their home dimension.
-- Automation stays suspended throughout the game's save-upload exit flow, including after the UI has been removed.
-- Critical-hit quests remain background objectives. They no longer affect joint map selection or displace reachable specific-enemy routes such as Carniplants in Jungle.
+- Fixed refinery collection checks by comparing inventory and queue changes instead of broken Interop tuple getters. Uncertain results stop retries and include quantity diagnostics.
+- Added idle refinery refill toward material capacity in one-output batches, balancing stored and queued stock. It protects raw reserves and active-burst Rage Pills, continues through Souls windows, and does not trigger travel or Jewel spending. Capacity-blocked queues remain occupied.
+- Limited Unity registration to four parameterless `StrategyHost` callbacks. Hook failures stay isolated; task failures clear stale plans and pause only the affected module.
+- Connected critical-hit task supply to raw-material collection and refining, crediting natural quest progress during waits. Stock targets use observed consumption, replenishment time and native effects, including critical caps and active bonuses. Shared effects do not reserve duplicate recipes; unknown-yield items such as Bunny Paw use surplus inputs without dedicated farming or paid acceleration.
+- Unified refinery execution and forecasts in one bounded scheduler covering existing queues, input availability and batch sizes. Recipes for both Spyglasses, Critical Sword and the three new supported items respect the Village building/Book of Refinement unlock, stock, reserves and capacity. Input routes preserve specific-target quests; completed output remains collectible after events end, without automatic cancellation or discarding.
+- Added separate English/Chinese settings for Bunny Paw (event searches), Death Bringer (ordinary Giant combat) and CpS Spyglass (coin-multiplier windows). Normal mode waits for effects to expire; Bunny Paw also waits during Coins From Random Box quests. AFK keeps all three unlocked effects active without material use, regardless of their normal-mode switches.
+- Unified Paid Souls and refinery spending under a persistent UTC daily budget, defaulting to 50 Jewels, while retaining the refinery sub-budget. Migration preserves recorded refinery spending and pending charges. Purchases are marked pending before invocation; uncertain charges block both consumers across restarts until reconciled.
+- Restored automatic Paid Souls purchases through the native callback, with live price, balance, reserve and effect checks plus exact charge/result confirmation. Refinery slot purchases and acceleration have separate default-off switches and complete-recipe benefit checks. Neither adapter requires a game-version or binary-hash match; manually purchased bonuses remain usable.
+- Fixed Sleepy Hollow mount floating by releasing the mod's jump/upward velocity and yielding jump, Boost, Wind Dash and bow control throughout Rage preparation, execution and ending. Normal control resumes afterward.
+- Updated quests to the data-object API with stable IDs/calibration names and native eligibility, replacing the removed UI cache. A shared policy excludes ineffective event-credit items from estimates, crafting, supply and reservations, while preserving useful real-action effects and native collab exceptions. Future activities reuse known-type rules across game updates; unrecognized tasks are skipped in isolation. Event samples stay outside ordinary calibration. Location tasks retain their destination and re-entry handling; rerolls remain Daily/Weekly-only.
+- Switched Chest Hunt preparation to the stable `StartEventDelayed` entry point, removing reliance on a version-dependent generated coroutine class.
+- Restored specific-Giant routing, including Giant Gorilla, when bow automation and rapid Giant attacks are enabled. Critical-hit quests remain background objectives and do not displace specific-enemy routes. Automation stays suspended through save-upload exit, including after UI removal.
 
 ### Compatibility
 
-- This build targets the new 7.3.6 task API and does not support the old 7.0.6 quest enum API.
-- Unknown task types are skipped for planning, crafting, claiming and rerolling. An unknown active Daily or Weekly task still occupies its slot, preventing the mod from generating a replacement set over it.
-- Automatic purchases are disabled on game binaries whose purchase flow has not been checked. Manually activated paid bonuses can still be used for Rage chaining.
+- Targets Idle Slayer 7.3.6; the old 7.0.6 quest enum API is unsupported.
+- Unknown task types are skipped for planning and mutation but still occupy Daily/Weekly slots, preventing replacement sets from overwriting them.
+- Removed game-version gates and hash checks from runtime and packaging. Journal writes use direct content comparison; older journals retain spending and pending charges. Native interfaces must still exist, and live-state, budget and result checks remain in place.
 
 ### Verification
 
-- Release compilation against freshly generated 7.3.6 interfaces and static checks of native member references passed. The relevant task-counting, refinery and purchase code was inspected without executing a purchase.
-- In-game validation is still pending, including UI paths, live task progress, event multipliers, native hook installation and refinery behavior.
+- Release compilation and static native-reference checks passed against fresh 7.3.6 interfaces. Task, refinery and purchase code was inspected without executing a purchase.
+- Full in-game validation remains pending, including UI, task progress, event multipliers, hooks and refinery behavior.
 
 ## 1.0.0
 
@@ -63,7 +58,6 @@ Initial public release.
 ### Packaging
 
 - Builds against a user-supplied Idle Slayer installation without storing game or third-party assemblies in the repository.
-- Ships a release archive containing the mod DLL, README, changelog, license, SHA-256 checksum and README banner.
+- Ships a release archive containing the mod DLL, README, changelog, license and README banner.
 - Publishes consistent author, repository and MIT license metadata across the assembly, source archive, GitHub and Nexus Mods.
 - Includes structured GitHub bug-report, feature-request and pull-request templates plus automatic release-note categories.
-- Reports separate SHA-256 hashes for the release DLL and final ZIP archive.

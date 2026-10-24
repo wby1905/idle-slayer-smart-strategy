@@ -83,6 +83,7 @@ public sealed partial class StrategyBehaviour
         _nextSupplementalCraftCheckAt = 0f;
         _nextSupplementalRefineAt = 0f;
         _supplementalRefining.Invalidate();
+        _craftingDemand.Invalidate();
         _nextPermanentTimedCraftableScanAt = 0f;
         SmartLog.Info(SmartLogCategory.Settings,
             $"Applied {changedKeys.Count} settings and invalidated quest, material, travel, and combat plans.");

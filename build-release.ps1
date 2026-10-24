@@ -63,16 +63,10 @@ Copy-Item -LiteralPath $changelog -Destination (Join-Path $stage 'CHANGELOG.md')
 Copy-Item -LiteralPath $license -Destination (Join-Path $stage 'LICENSE')
 Copy-Item -LiteralPath $hero -Destination (Join-Path $images 'smart-strategy-hero.png')
 
-$hash = (Get-FileHash -LiteralPath (Join-Path $mods 'SmartStrategy.dll') -Algorithm SHA256).Hash
-Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding utf8NoBOM `
-    -Value "$hash  Mods/SmartStrategy.dll"
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
-$zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
 
 [PSCustomObject]@{
     Version = $version
     Dll = (Join-Path $mods 'SmartStrategy.dll')
     Zip = $zip
-    DllSha256 = $hash
-    ZipSha256 = $zipHash
 }

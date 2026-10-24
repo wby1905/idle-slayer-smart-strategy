@@ -16,11 +16,13 @@ internal sealed class MaterialNeed
     internal int QuestPlanId { get; }
     internal bool Opportunistic { get; }
     internal bool ForRefinery { get; }
+    internal IReadOnlyList<SmartItem> QuestItems { get; }
     internal double Severity => Desired <= 0 ? 0 : Math.Clamp((Desired - Current) / Desired, 0, 1);
 
     internal MaterialNeed(Drop material, BaseMap map, double desired, double current, int priority,
         double targetEnemiesPerPattern, double expectedEligibleKills, bool giantDrop, string purpose = "Stock supply",
-        int questPlanId = 0, bool opportunistic = false, bool forRefinery = false)
+        int questPlanId = 0, bool opportunistic = false, bool forRefinery = false,
+        IEnumerable<SmartItem> questItems = null)
     {
         Material = material;
         Map = map;
@@ -34,28 +36,52 @@ internal sealed class MaterialNeed
         QuestPlanId = questPlanId;
         Opportunistic = opportunistic;
         ForRefinery = forRefinery;
+        QuestItems = questItems?.Distinct().ToArray() ?? Array.Empty<SmartItem>();
     }
 }
 
 internal sealed class MaterialPlanner
 {
     private readonly CraftableCatalog _catalog;
+    private readonly RefinedCraftingSupply _refinery;
+    private readonly Dictionary<int, RefineryRecipeRequest> _questRefineryRequests = new();
+    private float _nextRefinedQuestRefresh;
     private readonly Dictionary<string, float> _questSupplySkipLogUntil = new(StringComparer.Ordinal);
     private readonly Dictionary<int, float> _nextCombinedStaffLogAtByQuest = new();
     private readonly Dictionary<int, IReadOnlyList<MapEfficiency>> _materialEfficiencyCache = new();
     private readonly Dictionary<int, Dictionary<SmartItem, int>> _recommendedKillStaffUsesByQuest = new();
 
-    internal MaterialPlanner(CraftableCatalog catalog) => _catalog = catalog;
+    internal MaterialPlanner(CraftableCatalog catalog, RefinedCraftingSupply refinery)
+    { _catalog = catalog; _refinery = refinery; }
 
-    internal double PlannedRawReserve(Drop raw, IEnumerable<int> activePlanIds)
+    internal IReadOnlyList<RefineryRecipeRequest> RefinedQuestRequests(IEnumerable<QuestPlan> activePlans)
+    {
+        var plans = activePlans.Where(p => p?.Quest != null && p.Current < p.Goal && QuestApi.CanProgressNow(p.Quest))
+            .GroupBy(p => p.InstanceId).Select(g => g.First()).ToArray();
+        var ids = plans.Select(p => p.InstanceId).ToHashSet();
+        foreach (var stale in _questRefineryRequests.Keys.Where(id => !ids.Contains(id)).ToArray()) _questRefineryRequests.Remove(stale);
+        if (UnityEngine.Time.unscaledTime >= _nextRefinedQuestRefresh)
+        {
+            _nextRefinedQuestRefresh = UnityEngine.Time.unscaledTime + 10;
+            // Critical-hit quests are background tasks, but their item supply still needs the same
+            // recipe/value model as the primary quest. The route arbiter retains primary-map priority.
+            foreach (var plan in plans.Where(p => p.Type == QuestKind.DoCriticals)) FindQuestSupplyNeed(plan);
+        }
+        return _questRefineryRequests.Values.Where(r => r.IsApplicable).ToArray();
+    }
+
+    internal double PlannedRawReserve(Drop raw, IEnumerable<QuestPlan> activePlans)
     {
         // Concurrent quest recommendations can share staff coverage. Retain the largest planned
         // count of each staff rather than multiplying it by the number of simultaneous quests.
         var uses = new Dictionary<SmartItem, int>();
-        foreach (var plan in activePlanIds.Distinct().Where(id => _recommendedKillStaffUsesByQuest.ContainsKey(id))
-                     .Select(id => _recommendedKillStaffUsesByQuest[id]))
-            foreach (var pair in plan)
-                uses[pair.Key] = Math.Max(uses.TryGetValue(pair.Key, out var current) ? current : 0, pair.Value);
+        foreach (var plan in activePlans.Where(p => p?.Quest != null).GroupBy(p => p.InstanceId).Select(g => g.First()))
+        {
+            if (!_recommendedKillStaffUsesByQuest.TryGetValue(plan.InstanceId, out var recommendation)) continue;
+            foreach (var pair in recommendation)
+                if (QuestEffectPolicy.CanSpend(plan.Quest, pair.Key))
+                    uses[pair.Key] = Math.Max(uses.TryGetValue(pair.Key, out var current) ? current : 0, pair.Value);
+        }
         var total = 0d;
         foreach (var pair in uses)
             total += RefinedCraftingSupply.RecipeAmount(_catalog.Get(pair.Key), raw) * Math.Max(0, pair.Value);
@@ -355,6 +381,7 @@ internal sealed class MaterialPlanner
 
     private MaterialNeed FindQuestSupplyNeed(QuestPlan plan)
     {
+        if (plan != null) _questRefineryRequests.Remove(plan.InstanceId);
         if (!Plugin.Config.QuestSupplyPlanningEnabled.Value || plan?.Quest == null ||
             !QuestApi.CanProgressNow(plan.Quest) || plan.Current >= plan.Goal)
             return null;
@@ -387,7 +414,7 @@ internal sealed class MaterialPlanner
             bool itemActive;
             try
             {
-                if (!item.TabVisible() || !item.ExtraCondition()) continue;
+                if (!CraftableCatalog.HasUnlockedRecipe(item)) continue;
                 currentCoverage = PermanentClientBonuses.CoverageSeconds(item);
                 itemActive = item.IsActive() || currentCoverage > 0.05;
                 craftable = item.HowManyCanCraft();
@@ -421,6 +448,42 @@ internal sealed class MaterialPlanner
                 ? CoverageAdjustedSeconds(directSeconds, boostedSeconds, travel,
                     currentCoverage + usableStockUses * duration)
                 : boostedSeconds;
+
+            // Refinery recipes expand into ordinary raw inputs plus native queues. They are not
+            // rejected merely because the refined output itself has no monster/drop map.
+            var usesRefinedInputs = CraftSupplyPlanner.HasRefinedIngredients(item);
+            if (usesRefinedInputs && !Plugin.Config.SupplementalRefiningEnabled.Value)
+            { firstRejection ??= "Automatic refinery supply is disabled"; firstRejectedKind = kind; continue; }
+            var pipeline = usesRefinedInputs
+                ? _refinery.SupplyPlanner.Quote(item, targetStockUses, plan.TargetMap, 2,
+                    plan.InstanceId, _refinery.ProtectedRawStock, taskItem: kind) : null;
+            if (pipeline?.UsesRefinery == true)
+            {
+                if (!pipeline.Reachable) { firstRejection ??= pipeline.BlockedReason; firstRejectedKind = kind; continue; }
+                if (pipeline.RawNeeds.Count > 0 && (!Plugin.Config.RefineryRawMaterialFarming.Value ||
+                    !Plugin.Config.AutomaticMaterialTravel.Value))
+                { firstRejection ??= "This refinery recipe needs raw-material travel, which is disabled"; firstRejectedKind = kind; continue; }
+                var waiting = Math.Max(0, pipeline.ReadySeconds - pipeline.FarmingSeconds);
+                var remainingFraction = baselineSeconds <= 0 ? 0 : Math.Clamp(1 - waiting / baselineSeconds, 0, 1);
+                var coverageAfterSupply = Math.Max(0, currentCoverage - pipeline.ReadySeconds) + usableStockUses * duration;
+                var afterSupply = CoverageAdjustedSeconds(directSeconds * remainingFraction,
+                    boostedSeconds * remainingFraction, 0, coverageAfterSupply);
+                var completion = pipeline.ReadySeconds + afterSupply;
+                var saving = baselineSeconds - completion;
+                if (saving < Math.Max(0, Plugin.Config.QuestSupplyMinimumNetSeconds.Value)) continue;
+                var request = new RefineryRecipeRequest(item, targetStockUses, 0, Immediate: true,
+                    DeadlineSeconds: baselineSeconds, AllowRawFarming: true, QuestPlanId: plan.InstanceId,
+                    Purpose: $"Quest {plan.Name}: supply {pipeline.ReadySeconds:0}s, expected net saving {saving:0}s",
+                    Task: plan.Quest, TaskItem: kind);
+                _questRefineryRequests[plan.InstanceId] = request;
+                // Waiting on an already-funded queue does not lock the map or stop natural quest progress.
+                var rawNeed = pipeline.RawNeeds.OrderByDescending(n => MapEfficiencyEstimator.SameMap(n.Map,
+                    MapController.instance?.selectedMap)).ThenByDescending(n => n.Severity).FirstOrDefault();
+                if (rawNeed != null && (best == null || saving > best.NetSaving))
+                    best = new QuestSupplyOption(kind, rawNeed, pipeline.ReadySeconds, afterSupply, baselineSeconds,
+                        saving, plannedUses, usableStockUses, duration, targetStockUses < requestedStockUses);
+                continue;
+            }
             var needs = BuildSupplyNeeds(item, targetStockUses, kind, plan, out var unavailableReason);
             if (needs.Count == 0 || needs.Any(x => x.Need == null))
             {
@@ -482,7 +545,7 @@ internal sealed class MaterialPlanner
         var candidates = new List<KillStaffCandidate>();
         foreach (var definition in KillStaffDefinitions())
         {
-            if (plan.UsesUnboostedProgress) break;
+            if (!QuestEffectPolicy.CanAffect(plan.Quest, definition.Kind)) continue;
             var item = _catalog.Get(definition.Kind);
             if (item == null) continue;
             try
@@ -500,7 +563,7 @@ internal sealed class MaterialPlanner
         TemporaryCraftableItem ragePill = null;
         var ragePillTargetStock = 0;
         var canSupplyOneRagePill = false;
-        if (rageQuest && Plugin.Config.QuestRagePillEnabled.Value &&
+        if (rageQuest && QuestEffectPolicy.CanAffect(plan.Quest, SmartItem.RagePill) && Plugin.Config.QuestRagePillEnabled.Value &&
             (StrategyBehaviour.Current?.RemainingQuestRagePillAllowance(plan.InstanceId) ??
              Math.Max(0, Plugin.Config.MaximumRagePillsPerQuestSession.Value)) > 0)
         {
@@ -670,7 +733,7 @@ internal sealed class MaterialPlanner
 
     internal bool ShouldCraftRecommendedKillStaff(QuestPlan plan, SmartItem kind)
     {
-        if (plan?.Quest == null || plan.UsesUnboostedProgress || !QuestApi.CanProgressNow(plan.Quest) ||
+        if (plan?.Quest == null || !QuestEffectPolicy.CanSpend(plan.Quest, kind) ||
             !_recommendedKillStaffUsesByQuest.TryGetValue(plan.InstanceId, out var recommendations)) return false;
         return recommendations.TryGetValue(kind, out var uses) && uses > 0;
     }
@@ -679,7 +742,7 @@ internal sealed class MaterialPlanner
     {
         if (plan?.Quest == null || plan.UsesUnboostedProgress || !QuestApi.CanProgressNow(plan.Quest) ||
             !_recommendedKillStaffUsesByQuest.TryGetValue(plan.InstanceId, out var recommendations)) return false;
-        return recommendations.Values.Any(uses => uses > 0);
+        return recommendations.Any(pair => pair.Value > 0 && QuestEffectPolicy.CanSpend(plan.Quest, pair.Key));
     }
 
     private void BeginKillStaffRecommendation(QuestPlan plan)
@@ -892,10 +955,8 @@ internal sealed class MaterialPlanner
     }
 
     private static bool IsCombinedKillStaffQuest(QuestPlan plan) => plan != null &&
-        (plan.Type == QuestKind.KillEnemiesWithRageMode || !plan.UsesUnboostedProgress &&
-        plan.Type is QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
-            QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
-            QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies);
+        (QuestEffectPolicy.CanAffect(plan.Quest, SmartItem.AlternateDimensionStaff) ||
+         plan.Type == QuestKind.KillEnemiesWithRageMode && QuestEffectPolicy.CanAffect(plan.Quest, SmartItem.RagePill));
 
     private static bool IsKillStaff(SmartItem kind) => CraftableEffectModel.IsKillStaff(kind);
 
@@ -984,6 +1045,7 @@ internal sealed class MaterialPlanner
                     }
                     total.Desired += requirement.amount * (double)Math.Max(1, stock.TargetStockUses);
                     total.PlannedConsumption += requirement.amount * (double)Math.Max(0, stock.PlannedUses);
+                    total.Items.Add(stock.Candidate.Kind);
                 }
             }
             if (ragePill != null && ragePillTargetStock > 0)
@@ -1005,6 +1067,7 @@ internal sealed class MaterialPlanner
             // A Rage quest supplies reserve plus the one pill needed now; it never restores global pill stock.
                         total.Desired += requirement.amount * (double)ragePillTargetStock;
                         total.PlannedConsumption += requirement.amount;
+                        total.Items.Add(SmartItem.RagePill);
                     }
                 }
             }
@@ -1048,7 +1111,7 @@ internal sealed class MaterialPlanner
                     ? $"Quest {plan.Name} combined supply: staffs, cooldown, and one on-demand Rage Pill"
                     : $"Quest {plan.Name} combined supply: overlapping dimension staffs";
                 var need = new MaterialNeed(total.Material, efficiency.Map, desired, total.Material.amount, 2,
-                    density, expectedKills, efficiency.TargetsGiant, purpose, plan.InstanceId);
+                    density, expectedKills, efficiency.TargetsGiant, purpose, plan.InstanceId, questItems: total.Items);
                 result.Add(new SupplyNeedEstimate(need, workSeconds));
             }
             return result;
@@ -1108,7 +1171,7 @@ internal sealed class MaterialPlanner
         return CeilToInt(Math.Max(0, boostedWorkSeconds - currentCoverage) / duration);
     }
 
-    private static double EstimateWithoutBoosterSeconds(QuestPlan plan, SmartItem kind,
+    private double EstimateWithoutBoosterSeconds(QuestPlan plan, SmartItem kind,
         double fullBoostedSeconds)
     {
         var travel = MapEfficiencyEstimator.EstimatedTravelSeconds(plan.TargetMap);
@@ -1117,6 +1180,7 @@ internal sealed class MaterialPlanner
         var inventory = PlayerInventory.instance;
         var multiplier = kind switch
         {
+            SmartItem.CriticalSword => CraftableYieldModel.CriticalQuestSpeedRatio(_catalog.Get(kind), removeActive: true),
             SmartItem.DeathwaveScepter or SmartItem.BidimensionalStaff or SmartItem.AlternateDimensionStaff =>
                 RemovalMultiplier(inventory?.questProgressPerKill ?? 1,
                     CraftableEffectModel.KillProgressBonus(kind)),
@@ -1266,7 +1330,7 @@ internal sealed class MaterialPlanner
                     density, efficiency.TargetsGiant, includeTemporaryShards: false) * 60;
                 var purpose = $"Quest {plan.Name} supply: craft {kind}";
                 var need = new MaterialNeed(material, efficiency.Map, desired, material.amount, 2, density,
-                    expectedKills, efficiency.TargetsGiant, purpose, plan.InstanceId);
+                    expectedKills, efficiency.TargetsGiant, purpose, plan.InstanceId, questItems: new[] { kind });
                 result.Add(new SupplyNeedEstimate(need, workSeconds));
             }
         }
@@ -1287,7 +1351,7 @@ internal sealed class MaterialPlanner
         // overwrite one another every tick, bypassing the intended 30-second guard and logging at 2 Hz.
         _questSupplySkipLogUntil[key] = now + 300f;
         SmartLog.Debug(SmartLogCategory.Material,
-            $"Quest supply deferred: item={kind}, questInstanceId={plan?.InstanceId ?? 0}.");
+            $"Quest supply deferred: item={kind}, questInstanceId={plan?.InstanceId ?? 0}; {reason}.");
     }
 
     private double ExpectedSupplyMaterialKills(double materialsNeeded, bool giantDrop, bool projectWhetstone)
@@ -1340,7 +1404,7 @@ internal sealed class MaterialPlanner
         return work + firstTravel + Math.Max(0, transitions - (firstTravel > 0 ? 1 : 0)) * portalCycle;
     }
 
-    private static double EstimateBoostedQuestSeconds(QuestPlan plan, SmartItem kind, double directSeconds)
+    private double EstimateBoostedQuestSeconds(QuestPlan plan, SmartItem kind, double directSeconds)
     {
         var travel = MapEfficiencyEstimator.EstimatedTravelSeconds(plan.TargetMap);
         var work = Math.Max(0, directSeconds - travel);
@@ -1351,6 +1415,7 @@ internal sealed class MaterialPlanner
         var remaining = Math.Max(0, plan.Goal - plan.Current);
         var ratio = kind switch
         {
+            SmartItem.CriticalSword => CraftableYieldModel.CriticalQuestSpeedRatio(_catalog.Get(kind)),
             SmartItem.DeathwaveScepter or SmartItem.BidimensionalStaff or SmartItem.AlternateDimensionStaff =>
                 liveKill / (liveKill + CraftableEffectModel.KillProgressBonus(kind)),
             SmartItem.ShardsNecklace => GiantSpawnBoostRatio(),
@@ -1396,38 +1461,8 @@ internal sealed class MaterialPlanner
         catch { return 1; }
     }
 
-    private static IEnumerable<SmartItem> RelevantQuestBoosters(QuestPlan plan)
-    {
-        if (plan.Type is QuestKind.KillEnemies or QuestKind.KillEnemiesWithArrows or QuestKind.KillFlyers or
-            QuestKind.KillGiants or QuestKind.KillEnemiesWithRageMode or QuestKind.KillEnemiesWithCharacter or
-            QuestKind.KillEnemiesOfType or QuestKind.KillEnemiesInLocation or QuestKind.KillShinyEnemies)
-        {
-            if (plan.TargetsGiants) yield return SmartItem.ShardsNecklace;
-            if (!plan.UsesUnboostedProgress)
-            {
-                yield return SmartItem.DeathwaveScepter;
-                yield return SmartItem.BidimensionalStaff;
-                yield return SmartItem.AlternateDimensionStaff;
-            }
-        }
-        if (!plan.UsesUnboostedProgress && plan.Type is QuestKind.PickUpCoins or QuestKind.PickUpRubies or QuestKind.PickUpSapphires or
-            QuestKind.PickUpEmeralds or QuestKind.PickUpGemstones or QuestKind.PickUpDiamonds or QuestKind.PickUpZyniums)
-            yield return SmartItem.NecklaceOfCollectables;
-        if (!plan.UsesUnboostedProgress && plan.Type is QuestKind.HitRandomBoxes or QuestKind.HitRandomSilverBoxes or
-            QuestKind.HitRandomGoldenBoxes) yield return SmartItem.RandomBoxStaff;
-        if (plan.Type is QuestKind.HitRandomBoxes or QuestKind.GetCoinsFromRandomBox)
-            yield return SmartItem.RandomStone;
-        if (plan.Type == QuestKind.GetMaterials) yield return SmartItem.Whetstone;
-        if (plan.Type is QuestKind.BonusStage or QuestKind.BonusStageSections)
-        {
-            yield return SmartItem.Specialization;
-            yield return SmartItem.RandomStone;
-        }
-        if (plan.Type == QuestKind.ChestHuntChests) yield return SmartItem.KeyManifest;
-        if (plan.Type == QuestKind.DoCriticals) yield return SmartItem.CriticalSword;
-        if (plan.Type is QuestKind.KillEnemiesWithRageMode or QuestKind.UseRageMode || plan.RequiresRageForBowAutomation)
-            yield return SmartItem.RagePill;
-    }
+    private static IEnumerable<SmartItem> RelevantQuestBoosters(QuestPlan plan) =>
+        QuestEffectPolicy.ApplicableItems(plan?.Quest);
 
     private static int ReserveUses(SmartItem kind) => kind switch
     {
@@ -1536,6 +1571,7 @@ internal sealed class MaterialPlanner
     private sealed class CombinedStaffMaterial
     {
         internal Drop Material { get; }
+        internal HashSet<SmartItem> Items { get; } = new();
         internal double Desired { get; set; }
         internal double PlannedConsumption { get; set; }
 

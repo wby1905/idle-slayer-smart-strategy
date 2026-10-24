@@ -595,7 +595,7 @@ internal sealed partial class QuestDirector
             $"Quest plan: source={plan.Source}, instanceId={plan.InstanceId}, progress={plan.Current}/{plan.Goal}, type={plan.Type}, " +
                 $"map={plan.TargetMap?.name ?? "any"}, expected={FormatDuration(plan.ExpectedSeconds)}, density={plan.TargetEnemiesPerPattern:0.##}/pattern, " +
                 $"map utility={plan.MapUtility:0.###}, joint quests={plan.JointQuestCount}, unlock bonus={plan.StrategicUnlockBonus}, " +
-                $"targets Giants={plan.TargetsGiants}, raw quest credit={plan.UsesUnboostedProgress}, " +
+                $"targets Giants={plan.TargetsGiants}, item rule={QuestEffectPolicy.Describe(plan.Quest)}, " +
                 $"Rage required for bow={plan.RequiresRageForBowAutomation}, score={plan.Score}.");
         return plan;
     }

@@ -19,9 +19,10 @@ Use the issue forms to report bugs with reproduction steps or request a specific
 - Keep source, comments, configuration descriptions, logs, diagnostics, and documentation in English. Non-English user-facing text belongs only in the centralized localization catalog.
 - Keep settings dependencies typed with `SmartSettingId`.
 - Keep native task-type mapping and event/location rules in `QuestApi.cs`.
-- Keep Paid Souls compatibility checks and pending-charge tracking in `PaidSoulsPurchaseCompatibility.cs`.
-- Keep refinery queue operations in `RefinedCraftingSupply.cs` and completion-time estimates in `RefineryForecast.cs`. Count existing queues as committed supply; do not assume their outputs can be replaced by duplicate production in an empty slot.
-- Keep refinery payment checks and the persistent budget journal in `RefineryPremiumPolicy.cs`. Preserve the pending-charge guard when changing purchase behavior.
+- Keep quest-item applicability in `QuestEffectPolicy.cs` and use it at both planning and execution boundaries. Do not infer quest semantics from event names or matching type-ID strings; the game compares native quest-type objects. Task supply must retain its item purpose so changed rules can invalidate it.
+- Keep native Paid Souls and refinery checks in their adapters. Check interfaces and live state without game-version or binary-hash allowlists. Route automatic Jewel consumption through `JewelPurchaseCoordinator.cs` and its durable `JewelBudgetJournal.cs`; a subsystem must not keep a separate retry or budget path.
+- Keep recipe expansion in `CraftSupplyPlanner.cs` and native marginal-effect formulas in `CraftableYieldModel.cs`. Separate observed opportunity rates from game-provided effect values, and leave unknown yields explicit.
+- Keep refinery queue operations in `RefinedCraftingSupply.cs`. Execution and `RefineryForecast.cs` must use the same `RefinerySchedule.cs` plan. Count existing queues as committed supply; do not replace them with duplicate production in an empty slot.
 
 Keep each file focused. Use early returns when they clarify the flow, and contain optional-integration failures so unrelated quest, material, travel and combat systems can continue.
 

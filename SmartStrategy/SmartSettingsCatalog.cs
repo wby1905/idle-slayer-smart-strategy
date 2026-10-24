@@ -50,7 +50,8 @@ internal enum SmartSettingId
     RefineryRawFarming,
     RefineryIdleStock,
     RefineryBuySlots,
-    RefinerySpeedup
+    RefinerySpeedup,
+    RefineryFillIdleSlots
 }
 
 internal static partial class SmartSettingsUi
@@ -124,6 +125,7 @@ internal static partial class SmartSettingsUi
             new(SmartSettingId.SupplementalRefining, materials, SmartSettingsText.SupplementalRefining, c.SupplementalRefiningEnabled),
             new(SmartSettingId.RefineryRawFarming, materials, SmartSettingsText.RefineryRawFarming, c.RefineryRawMaterialFarming, SmartSettingId.SupplementalRefining, SmartSettingId.MaterialTravel),
             new(SmartSettingId.RefineryIdleStock, materials, SmartSettingsText.RefineryIdleStock, c.RefineryIdleStockEnabled, SmartSettingId.SupplementalRefining),
+            new(SmartSettingId.RefineryFillIdleSlots, materials, SmartSettingsText.RefineryFillIdleSlots, c.RefineryFillIdleSlotsToCapacity, SmartSettingId.SupplementalRefining, SmartSettingId.RefineryIdleStock),
             new(SmartSettingId.RefineryBuySlots, materials, SmartSettingsText.RefineryBuySlots, c.RefineryBuySlotsEnabled, SmartSettingId.SupplementalRefining),
             new(SmartSettingId.RefinerySpeedup, materials, SmartSettingsText.RefinerySpeedup, c.RefinerySpeedupEnabled, SmartSettingId.SupplementalRefining),
             new(SmartSettingId.ResetPortalCooldown, materials, SmartSettingsText.ResetPortalCooldown, c.ResetPortalCooldown),

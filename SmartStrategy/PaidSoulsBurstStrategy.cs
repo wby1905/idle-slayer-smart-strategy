@@ -110,7 +110,7 @@ public sealed partial class StrategyBehaviour
             if (!PaidSoulsTierAccepted(tier)) return false;
             var balance = CurrentJewelsOfSoul();
             var reserve = Math.Max(0, Plugin.Config.PaidSoulsJewelReserve.Value);
-            if (balance + 0.0001 < cost + reserve) return false;
+            if (!JewelPurchaseCoordinator.CanAfford(JewelPurchaseKind.PaidSouls, cost, balance, out _)) return false;
             if (!PaidSoulUspCostRatioReady(out _paidPlateauSummary))
             {
                 if (Time.unscaledTime >= _paidNextPlateauLogAt)
@@ -414,10 +414,10 @@ public sealed partial class StrategyBehaviour
 
             var reserve = Math.Max(0, Plugin.Config.PaidSoulsJewelReserve.Value);
             var balance = CurrentJewelsOfSoul();
-            if (balance + 0.0001 < cost + reserve)
+            if (!JewelPurchaseCoordinator.CanAfford(JewelPurchaseKind.PaidSouls, cost, balance, out var budgetReason))
             {
                 SmartLog.Info(SmartLogCategory.Endgame,
-                    $"Skipped the paid Souls purchase: Jewels={balance:0} < cost={cost:0} + reserve={reserve}.");
+                    $"Skipped the paid Souls purchase: {budgetReason}; Jewels={balance:0}, cost={cost:0}.");
                 return false;
             }
 
@@ -508,7 +508,7 @@ public sealed partial class StrategyBehaviour
         ClearMaterialLinger();
         SmartLog.Info(SmartLogCategory.Endgame,
             $"Detected an active paid Souls effect: multiplier={multiplier}x, remaining={secondsLeft:0.0}s. " +
-            "Other strategies are paused and no mid-window travel will occur.");
+            "Quest/crafting routes are paused; safe background refining may continue without mid-window travel.");
     }
 
     private void HandlePaidSoulsMaterialRecovery(MaterialNeed need)
@@ -605,7 +605,7 @@ public sealed partial class StrategyBehaviour
             return false;
         if (!PaidSoulsTierAccepted(tier)) return false;
         var balance = CurrentJewelsOfSoul();
-        if (balance + 0.0001 < cost + Math.Max(0, Plugin.Config.PaidSoulsJewelReserve.Value)) return false;
+        if (!JewelPurchaseCoordinator.CanAfford(JewelPurchaseKind.PaidSouls, cost, balance, out _)) return false;
         _paidSoulsPurchase = purchase;
         _paidSoulsEffect = effect;
         _paidTierMultiplier = tier;

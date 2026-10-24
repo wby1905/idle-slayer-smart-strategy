@@ -68,6 +68,8 @@ internal sealed class SmartConfig
     internal readonly MelonPreferences_Entry<bool> SupplementalRefiningEnabled;
     internal readonly MelonPreferences_Entry<bool> RefineryRawMaterialFarming;
     internal readonly MelonPreferences_Entry<bool> RefineryIdleStockEnabled;
+    internal readonly MelonPreferences_Entry<bool> RefineryFillIdleSlotsToCapacity;
+    internal readonly MelonPreferences_Entry<int> RefineryIdleBatchOutputs;
     internal readonly MelonPreferences_Entry<int> RefineryIdleStockPerMaterial;
     internal readonly MelonPreferences_Entry<int> RefineryMaximumBatchOutputs;
     internal readonly MelonPreferences_Entry<float> RefineryLookaheadMinutes;
@@ -89,6 +91,8 @@ internal sealed class SmartConfig
     internal readonly MelonPreferences_Entry<int> PaidSoulsMinimumTierMultiplier;
     internal readonly MelonPreferences_Entry<int> PaidSoulsTestTierMultiplier;
     internal readonly MelonPreferences_Entry<int> PaidSoulsJewelReserve;
+    internal readonly MelonPreferences_Entry<int> GlobalDailyJewelBudget;
+    internal readonly MelonPreferences_Entry<int> GlobalJewelReserve;
     internal readonly MelonPreferences_Entry<int> PaidSoulsMinimumUltraAscensions;
     internal readonly MelonPreferences_Entry<float> PaidSoulsMinimumNextUspRemainingRatioPercent;
     internal readonly MelonPreferences_Entry<int> PaidSoulsHighestEquipmentMinimumLevel;
@@ -253,10 +257,12 @@ internal sealed class SmartConfig
         CpsSpyglassEnabled = c.CreateEntry("CPS Spyglass Enabled", true, description: "Normal mode: use CPS Spyglass during a live CPS or coin-value multiplier window. Endgame permanent effects ignore this normal-mode switch.");
         SupplementalRefiningEnabled = c.CreateEntry("Supplemental Refining Enabled", true, description: "Manage native refinery queues after the Village building and Book of Refinement are unlocked. Claims safely and plans shared ingredients for supported craftables; never cancels or discards queues.");
         RefineryRawMaterialFarming = c.CreateEntry("Refinery Raw Material Farming", true, description: "Supply raw ingredients for planned refined recipes. Critical stock and concrete quests take priority; during those quests collect only on their current map.");
-        RefineryIdleStockEnabled = c.CreateEntry("Refinery Idle Stock Enabled", true, description: "Use surplus raw stock to maintain a small refined-material buffer, including in endgame mode. Does not request travel or premium spending for this buffer.");
-        RefineryIdleStockPerMaterial = c.CreateEntry("Refinery Idle Stock Per Material", 2, description: "Idle refined stock target per output. Recipe demand and all queued output count toward this target.");
+        RefineryIdleStockEnabled = c.CreateEntry("Refinery Idle Stock Enabled", true, description: "Use surplus raw stock to keep free refinery slots productive, including in endgame mode. Does not request travel or premium spending for idle stock.");
+        RefineryFillIdleSlotsToCapacity = c.CreateEntry("Refinery Fill Idle Slots To Capacity", true, description: "After funded recipe jobs, fill refined materials toward native capacity using surplus inputs. Off uses the smaller per-material stock target instead.");
+        RefineryIdleBatchOutputs = c.CreateEntry("Refinery Idle Batch Outputs", 1, description: "Outputs per background refill batch. Short batches leave slots available sooner for new recipe needs; bounded by the main batch limit.");
+        RefineryIdleStockPerMaterial = c.CreateEntry("Refinery Idle Stock Per Material", 2, description: "Idle target per output when Fill Idle Slots To Capacity is off. Inventory and all queued output count toward the target.");
         RefineryMaximumBatchOutputs = c.CreateEntry("Refinery Maximum Batch Outputs", 6, description: "Maximum outputs committed per automatic batch; bounded by missing demand, raw reserves and output capacity.");
-        RefineryLookaheadMinutes = c.CreateEntry("Refinery Lookahead Minutes", 45f, description: "Prepare one replacement recipe when a timed effect has less coverage than this horizon. Inactive enabled effects also keep one recipe ready.");
+        RefineryLookaheadMinutes = c.CreateEntry("Refinery Lookahead Minutes", 45f, description: "Minimum supply lookahead. Live recipe lead time can extend it; observed use frequency sizes stock. Dedicated farming requires positive opportunity-weighted benefit. Cold-start or unknown-yield recipes use surplus inputs only.");
         RefineryBuySlotsEnabled = c.CreateEntry("Refinery Buy Slots Enabled", false, description: "Spend Jewels on an extra native slot only if current raw-funded recipe backlog shows enough completion-time gain. OFF by default.");
         RefinerySpeedupEnabled = c.CreateEntry("Refinery Speedup Enabled", false, description: "Spend Jewels to finish an automatic queue only when a complete currently usable recipe gains enough time. Never accelerates manual or idle-only queues. OFF by default.");
         RefineryMaximumSlots = c.CreateEntry("Refinery Maximum Slots", 3, description: "Maximum total refinery slots to buy; never exceeds the native limit.");
@@ -271,10 +277,12 @@ internal sealed class SmartConfig
         StackCompassWithSpyglassForChestHunt = c.CreateEntry("Stack Compass With Spyglass For Chest Hunt", true, description: "Allows Souls Spyglass and Souls Compass to overlap before Chest Hunt.");
         ChestHuntMinimumEffectSeconds = c.CreateEntry("Chest Hunt Minimum Effect Seconds", 30f, description: "Refreshes a booster before Chest Hunt only below this remaining duration.");
         EndgamePermanentPaidBonusesEnabled = c.CreateEntry("Endgame Permanent Paid Bonuses Enabled", true, description: "Endgame mode activates permanent 500x Paid Souls and Paid CpS through native effect entry points without calling purchase, and disables the paid Chest Hunt burst chain.");
-        PaidSoulsChestBurstEnabled = c.CreateEntry("Paid Souls Chest Burst Enabled", true, description: "Prepares the highest eligible Souls tier before Chest Hunt and chains Rage after exit. Automatic purchases require a verified game binary, live Jewel reserve, and exact charge/effect reconciliation; manually activated bonuses can also be adopted.");
+        PaidSoulsChestBurstEnabled = c.CreateEntry("Paid Souls Chest Burst Enabled", true, description: "Prepares the highest eligible Souls tier before Chest Hunt and chains Rage after exit. Automatic purchases check the live price, Jewel reserve, budget, and exact charge/effect reconciliation without a game-version restriction; manually activated bonuses can also be adopted.");
         PaidSoulsMinimumTierMultiplier = c.CreateEntry("Paid Souls Minimum Tier Multiplier", 500, description: "Starts only when the highest currently visible Jewel tier reaches this multiplier. The default requires 500x and never falls back to a lower tier.");
         PaidSoulsTestTierMultiplier = c.CreateEntry("Paid Souls Test Tier Multiplier", 0, description: "Real-flow lower-tier diagnostic switch. Zero selects the normal highest tier; 25, 50, 100, 250, or 500 permits only an exact match and never falls back. Restore zero after diagnostics.");
         PaidSoulsJewelReserve = c.CreateEntry("Paid Souls Jewel Reserve", 50, description: "Jewels retained after buying the highest Souls tier; live balance must cover actual price plus this reserve before exclusive strategy starts.");
+        GlobalDailyJewelBudget = c.CreateEntry("Global Daily Jewel Budget", 50, description: "Combined UTC-day cap for all automatic Jewel purchases, including Paid Souls and refinery actions. Zero disables all automatic spending; manual purchases are outside this budget.");
+        GlobalJewelReserve = c.CreateEntry("Global Jewel Reserve", 50, description: "Shared Jewel floor for every automatic consumer. The largest global, Paid Souls and refinery reserve applies.");
         PaidSoulsMinimumUltraAscensions = c.CreateEntry("Paid Souls Minimum Ultra Ascensions", 1, description: "Ultra Ascensions required before enabling the next-USP cost-ratio model; the highest tier is never purchased before the first Ultra Ascension by default.");
         PaidSoulsMinimumNextUspRemainingRatioPercent = c.CreateEntry("Paid Souls Minimum Next USP Remaining Ratio Percent", 5f, description: "Minimum next-USP remaining SP divided by Current UA SP for a paid burst. Below the default 5 percent, naturally obtain the nearby USP first; the remaining ratio then rises again.");
         PaidSoulsHighestEquipmentMinimumLevel = c.CreateEntry("Paid Souls Highest Equipment Minimum Level", 50, description: "Minimum level of the highest economically reached base equipment before the highest paid Souls strategy is allowed, avoiding purchases immediately after unlock.");

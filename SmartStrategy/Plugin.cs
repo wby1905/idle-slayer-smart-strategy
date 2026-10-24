@@ -36,7 +36,7 @@ public sealed class Plugin : MelonMod
         QuestApi.Reset();
         SmartSettingsUi.OnGameSceneLoaded();
         if (StrategyBehaviour.Current == null)
-            ModUtils.RegisterComponent<StrategyBehaviour>();
+            ModUtils.RegisterComponent<StrategyHost>();
     }
 
     public override void OnLateInitializeMelon()

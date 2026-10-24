@@ -37,7 +37,9 @@ Version 1.1.0 is an unreleased update for Idle Slayer 7.3.6 (Steam build 2613912
 
 The task planner now handles active map-event quests, Visit Location and Kill Enemies in Location. It checks whether the event and task set are available and respects the required destination. Event objectives use raw progress, so the planner does not count ordinary quest-booster multipliers toward them. Unknown task types are skipped.
 
-Automatic Paid Souls purchases are enabled only when the Windows game binary exactly matches the inspected 7.3.6 build. On other builds, automatic purchases stay disabled. Bonuses purchased manually can still be used for Rage chaining.
+Quest estimates, crafting and supply share one item-applicability policy. Raw-count activities do not trigger kill-credit staffs, the collectable-credit necklace or Random Box Staff, including their material reservations and refinery requests. Items that create more real opportunities, such as Giant spawns, drops or critical hits, remain eligible when they help the target. The native collab Rage-kill exception remains supported. New activities using known native quest types and source markers inherit these rules without an event-name list or game-version check. An unrecognized task is skipped without disabling other tasks. Independent Souls/material strategies and free AFK effects keep their own controls.
+
+No feature requires a particular game version or game-binary hash. Automatic purchases use the available native methods and check live prices, balances, budgets and results. A missing interface disables the affected operation. Bonuses purchased manually can still be used for Rage chaining.
 
 Smart Strategy calls game IL2CPP types directly, so game updates can break compatibility. Check the MelonLoader log after an update before leaving the game unattended.
 
@@ -47,7 +49,7 @@ Smart Strategy calls game IL2CPP types directly, so game updates can break compa
 2. Copy `SmartStrategy.dll` into the game's `Mods` directory.
 3. Start the game and open **Smart Strategy** from the information-panel button list.
 
-Only the DLL is required. Do not install source files or build output folders. Release archives also include the README, changelog, license and a SHA-256 checksum file.
+Only the DLL is required. Do not install source files or build output folders. Release archives also include the README, changelog, license and README banner.
 
 ## First run and controls
 
@@ -76,28 +78,41 @@ Use these keys during play:
 
 Finish the refinery building in the Village and obtain the Book of Refinement from Jack. You can then run in other dimensions while the mod manages the native queues. The mod leaves the Village popup closed and checks the unlock before starting work. The game handles online timers and offline progress.
 
-With the default settings, the planner prepares one replacement recipe for each enabled supported effect below 45 minutes of remaining coverage, plus any spare uses required by your crafting settings. It combines shared ingredients across those recipes and prioritizes current needs over future stock. Surplus raw materials can supply a buffer of two of each refined output. Each automatic batch produces at most six outputs, subject to the remaining demand, raw-material reserves and bag capacity.
+The default supply lookahead is 45 minutes. A longer estimated supply chain extends that horizon. The planner combines shared ingredients and uses observed consumption intervals to size replacement stock, with up to three working copies plus configured reserves, subject to capacity. Recipe batches produce at most six outputs; the scheduler uses the same rules for execution and forecasts.
+
+After funded recipe work, the mod uses remaining free slots to refill refined materials toward their native capacity. It favors lower projected stock, counting queued output, and uses raw-material fullness to break ties. Background batches default to one output so new recipe needs do not wait behind long speculative jobs. This refill uses surplus inputs without dedicated travel or Jewel spending. A slot waiting for bag space remains occupied. Turning off `Refinery Fill Idle Slots To Capacity` restores the smaller `Refinery Idle Stock Per Material` target, which defaults to two.
+
+Dedicated supply must justify its cost. The mod reads each supported item's native effect and weighs it against observed useful opportunity time, raw-material acquisition and refinery work. It learns from runner time, excluding long pauses and offline time. During the first 60 seconds of observations, or when an item's yield is unknown, it uses surplus inputs without requesting dedicated farming. Bunny Paw stays in this surplus-only category because its effect on the Random Box selection process does not establish a direct Souls-yield ratio. It does not authorize paid acceleration for Bunny Paw.
+
+Critical-hit quest supply uses the current capped critical probability to compare direct completion with farming, refining and crafting. Existing queues keep running during material acquisition, and the estimate credits quest progress during the remaining wait. Several quests can share one item effect without reserving duplicate recipes. These are estimates, not a guarantee of globally optimal routes or measured farming gains.
 
 Raw-material supply protects Whetstone, Rage Pill and current quest-staff stock. Quests with a specific target keep their route. The planner can collect refinery inputs along that route or arrange a separate material trip after higher-priority work ends. It subtracts queued output before requesting more inputs, so you can continue quests while refining runs. AFK/endgame permanent effects need no recipe supply; the separate surplus buffer can still use spare raw stock.
 
-The mod keeps manual queues intact and collects a completed portion only when it all fits in the bag. It does not cancel jobs or discard output. Press `F7` to see slot timers, queued quantities and capacity blocks. If a manual batch has more completed output than the bag can hold, collect it through the game UI. An uncertain native inventory change suspends further refinery changes for that session.
+The mod keeps manual queues intact and collects a completed portion only when it all fits in the bag. It verifies collection through the inventory increase and the queue's claimed count or cleared state, avoiding broken generic return-field getters in the current Interop build. It does not cancel jobs or discard output. Press `F7` to see slot timers, queued quantities and capacity blocks. If a manual batch has more completed output than the bag can hold, collect it through the game UI. An uncertain native inventory change suspends further refinery changes for that session and logs the observed quantities.
 
 The **Materials and travel** section contains separate controls for automatic refining, input farming, the surplus buffer, Jewel slot purchases and Jewel acceleration. Both paid options default to **off**. Numeric settings in `UserData/MelonPreferences.cfg` include:
 
 | Setting | Default |
 | --- | --- |
 | `Refinery Maximum Slots` | 3, bounded by the game's limit |
+| `Refinery Idle Batch Outputs` | 1; short background batches leave slots available sooner for recipe work |
 | `Refinery Jewel Reserve` | 50; the larger Paid Souls reserve also applies |
 | `Refinery Daily Jewel Budget` | 50 across refinery actions per UTC day |
+| `Global Jewel Reserve` | 50; the largest global, Paid Souls or refinery reserve applies to all automatic purchases |
+| `Global Daily Jewel Budget` | 50 total across Paid Souls and refinery purchases per UTC day; zero disables automatic spending |
 | `Refinery Minimum Slot Gain Minutes` | 30 minutes saved on the raw-funded recipe backlog |
 | `Refinery Minimum Speedup Minutes` | 5 minutes saved on the complete recipe |
 | `Refinery Minimum Seconds Saved Per Jewel` | 240 seconds per Jewel |
 
-On the inspected 7.3.6 build, one output consumes 100 raw materials and takes 10 minutes. An extra slot costs 30 Jewels; acceleration costs 2 Jewels per remaining cycle, rounded up. The mod reads these native values at runtime. Paid actions require the inspected game-binary hash and a matching live quote.
+On the inspected 7.3.6 build, one output consumes 100 raw materials and takes 10 minutes. An extra slot costs 30 Jewels; acceleration costs 2 Jewels per remaining cycle, rounded up. The mod reads these native values at runtime and rechecks each paid action against its live quote.
+
+Background queue maintenance can continue during Souls and paid-burst windows. The mod protects the Rage Pill stock needed by the active burst and any critical supply plan; it does not treat ordinary bag-filling targets as mandatory reserves. A scene transition, disabled automation or an unsafe runner state still stops new actions.
 
 The mod can accelerate only a queue it created and has tracked without interruption. The recipe's other ingredients must be ready, and existing queues must cover its missing refined materials. For a timed event, the recipe must become ready before the event ends. Slot purchases depend on the estimated benefit of extra production capacity; a new slot does not speed up jobs already running. The mod does not spend Jewels to fill the surplus buffer.
 
-Before a paid call, the mod records the UTC-day spend and pending charge in `UserData/SmartStrategy_RefineryBudget.cfg`. It clears the pending marker only after checking both the Jewel deduction and the queue change. An unresolved charge blocks further refinery purchases across restarts; free refining can continue. Check the in-game balance and refinery result before clearing a pending marker.
+Paid Souls and refinery purchases share `UserData/SmartStrategy_JewelBudget.json`. Before calling a native purchase method, the mod records the charge and reserved budget, flushes the file and compares the saved bytes with the written content, without computing a hash. It preserves spending and pending charges from older journals while ignoring their retired digest field. It then rechecks the operation, price, balance and current limits. It clears the pending marker only after confirming both the exact Jewel deduction and the native result. An unresolved charge blocks both consumers across restarts; free refining and AFK effects can continue.
+
+On migration, the mod imports recorded refinery spending and unresolved charges from `UserData/SmartStrategy_RefineryBudget.cfg`. It keeps the old file intact and blocks spending if that file later changes. Previously unrecorded Paid Souls purchases cannot be reconstructed. Check the in-game balance and purchase result before repairing either journal; restarting or crossing a UTC date boundary does not clear an unresolved charge.
 
 ## AutoProgression compatibility
 
@@ -127,8 +142,8 @@ Back up your save before the first run and before enabling high-impact options. 
 - Standard automation is enabled on a new configuration. Open the in-game panel before leaving a new installation unattended; `F10` immediately stops Smart Strategy actions.
 - Quest rerolls and the optional zero-cooldown Portal setting bypass ordinary waiting limits.
 - Quest crafting, Rage Pills, temporary boosters and the Dragon Egg option can consume real inventory.
-- `Paid Souls Chest Burst` can spend Jewels of Soul on the inspected game build after checking progression, stock, price and the reserve you configured. It uses the game's own purchase callback and blocks repeat calls while a purchase is pending. If the result is uncertain, automatic purchases stay blocked for the current game session until the exact charge and matching active effect are confirmed. The strategy can also use manually purchased bonuses.
-- Refinery slot purchases and acceleration can spend Jewels if you enable their separate switches. Both default to off and share a refinery-only UTC daily budget. An unresolved refinery charge blocks further refinery spending across restarts, as described above.
+- `Paid Souls Chest Burst` can spend Jewels of Soul after checking progression, stock, price, shared reserve and daily budget. It uses the game's purchase callback and can also use manually purchased bonuses.
+- Refinery slot purchases and acceleration can spend Jewels if you enable their separate switches. Both default to off. They share the global daily budget with Paid Souls and also respect the refinery sub-budget. An unresolved charge blocks both automatic consumers across restarts, as described above. Manual purchases are outside the mod's budget.
 - Endgame mode is disabled by default. It directly maintains client-side timed effects, can activate paid-style 500x Souls and CpS effects without a purchase call, and removes several short-window routing guards. This mode changes the normal progression model.
 
 Disabling endgame mode lets active effects expire under the game's normal rules. Removing the DLL leaves the preferences file in place, so review `UserData/MelonPreferences.cfg` before reinstalling a later version.
@@ -166,7 +181,7 @@ Create a distributable archive with:
 
 After a game update, regenerate the MelonLoader interfaces before building. To use a separate directory of fresh interfaces, pass `-p:IdleSlayerAssembliesDir="X:\path\to\fresh\interop"` to the build, or `-AssembliesDirectory` to `build-release.ps1`. These game assemblies are build inputs only; do not include them in release archives.
 
-The build fails early when the game directory or `IdleSlayerMods.Common.dll` is missing. The release DLL is written to `SmartStrategy/bin/Release/net6.0/SmartStrategy.dll`; build output and release artifacts are ignored by Git. The release command prints separate SHA-256 hashes for the DLL and final ZIP archive.
+The build fails early when the game directory or `IdleSlayerMods.Common.dll` is missing. The release DLL is written to `SmartStrategy/bin/Release/net6.0/SmartStrategy.dll`; build output and release artifacts are ignored by Git. The release command prints the version and DLL/ZIP paths without generating checksum files.
 
 ## Architecture and compatibility
 
@@ -177,9 +192,11 @@ The build fails early when the game directory or `IdleSlayerMods.Common.dll` is 
 - `SmartSettingsCatalog.cs` defines the in-game settings and their dependencies.
 - `SmartLog.cs` routes all logging through MelonLoader.
 - `QuestApi.cs` maps native task objects to stable internal types and checks event, location and progress rules.
-- `PaidSoulsPurchaseCompatibility.cs` verifies the game binary before allowing automatic purchases and tracks uncertain purchase results.
+- `QuestEffectPolicy.cs` governs quest-item effects across estimation, crafting, supply and reservations. It distinguishes direct progress bonuses from real actions and invalidates obsolete task supply.
 - `RefineryStrategy.cs` connects craftable demand and material routes to `RefinedCraftingSupply.cs`, which manages native refinery queues.
-- `RefineryForecast.cs` estimates completion times without replacing queued output with duplicate production. `RefineryPremiumPolicy.cs` checks refinery charges and keeps the persistent budget journal.
+- `CraftSupplyPlanner.cs` expands complete recipes into acquisition routes and refinery work. `CraftableYieldModel.cs` reads native marginal effects; `CraftingDemandPolicy.cs` uses opportunity and consumption observations to decide whether to restock.
+- `RefinerySchedule.cs` supplies the deterministic batch plan used by execution and `RefineryForecast.cs`. Existing queued output cannot be replaced with duplicate production.
+- `JewelPurchaseCoordinator.cs` owns the cross-consumer payment gate; `JewelBudgetJournal.cs` stores the durable budget and pending charge. `PaidSoulsPurchaseCompatibility.cs` and `RefineryPremiumPolicy.cs` handle native eligibility and result checks.
 
 After an Idle Slayer or dependency update, compare the startup compatibility snapshot and review these contracts before changing strategy code.
 
